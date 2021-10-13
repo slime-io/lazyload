@@ -19,5 +19,6 @@ require (
 replace (
 	k8s.io/api => k8s.io/api v0.17.2
 	k8s.io/apimachinery => k8s.io/apimachinery v0.17.2
-	slime.io/slime/slime-framework => github.com/slime-io/slime/slime-framework v0.0.0-20211013082939-dad6ea0bd667
+	slime.io/slime/slime-framework => github.com/slime-io/slime/slime-framework v0.0.0-20211014020149-a1fd0b4fc677
+//slime.io/slime/slime-framework => ../slime/slime-framework
 )

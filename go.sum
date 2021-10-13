@@ -402,6 +402,8 @@ github.com/sirupsen/logrus v1.4.2 h1:SPIRibHv4MatM3XXNO2BJeFLZwZ2LvZgfQ5+UNI2im4
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
 github.com/slime-io/slime/slime-framework v0.0.0-20211013082939-dad6ea0bd667 h1:UGeun9sGNo8yxFmQVzbUYGkEkGH9MCmrRYpl0zlRn44=
 github.com/slime-io/slime/slime-framework v0.0.0-20211013082939-dad6ea0bd667/go.mod h1:pushZ/nY9/O8cmf5fr3eQnX4eRHYwCUauyG6i8FlRdY=
+github.com/slime-io/slime/slime-framework v0.0.0-20211014020149-a1fd0b4fc677 h1:UZi/ll12jdFpUY8+7yVJyCNTNAFuQLbfN73xF7QIw7s=
+github.com/slime-io/slime/slime-framework v0.0.0-20211014020149-a1fd0b4fc677/go.mod h1:pushZ/nY9/O8cmf5fr3eQnX4eRHYwCUauyG6i8FlRdY=
 github.com/soheilhy/cmux v0.1.4 h1:0HKaf1o97UwFjHH9o5XsHUOF+tqmdA7KEzXLpiyaw0E=
 github.com/soheilhy/cmux v0.1.4/go.mod h1:IM3LyeVVIOuxMH7sFAkER9+bJ4dT7Ms6E4xg4kGIyLM=
 github.com/spf13/afero v1.1.2/go.mod h1:j4pytiNVoe2o6bmDsKpLACNPDBIoEAkihy7loJ1B0CQ=
