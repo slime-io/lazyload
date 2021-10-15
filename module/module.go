@@ -3,6 +3,7 @@ package module
 import (
 	"os"
 
+	"github.com/golang/protobuf/proto"
 	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -12,6 +13,7 @@ import (
 	lazyloadapiv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 	"slime.io/slime/modules/lazyload/controllers"
 	istioapi "slime.io/slime/slime-framework/apis"
+	"slime.io/slime/slime-framework/apis/config/v1alpha1"
 	"slime.io/slime/slime-framework/bootstrap"
 	basecontroller "slime.io/slime/slime-framework/controllers"
 	"slime.io/slime/slime-framework/model"
@@ -20,6 +22,11 @@ import (
 const Name = "lazyload"
 
 type Module struct {
+	config v1alpha1.Fence
+}
+
+func (m *Module) Config() proto.Message {
+	return &m.config
 }
 
 func (m *Module) Name() string {
@@ -40,7 +47,11 @@ func (m *Module) InitScheme(scheme *runtime.Scheme) error {
 }
 
 func (m *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cbs model.ModuleInitCallbacks) error {
-	sfReconciler := controllers.NewReconciler(mgr, &env)
+	cfg := &m.config
+	if env.Config != nil && env.Config.Fence != nil {
+		cfg = env.Config.Fence
+	}
+	sfReconciler := controllers.NewReconciler(cfg, mgr, &env)
 
 	var builder basecontroller.ObjectReconcilerBuilder
 	if err := builder.Add(basecontroller.ObjectReconcileItem{

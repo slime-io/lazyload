@@ -25,6 +25,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"slime.io/slime/slime-framework/apis/config/v1alpha1"
 
 	istio "istio.io/api/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
@@ -53,6 +54,7 @@ import (
 type ServicefenceReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
+	cfg               *v1alpha1.Fence
 	env               *bootstrap.Environment
 	eventChan         chan event_source.Event
 	source            event_source.Source
@@ -62,12 +64,13 @@ type ServicefenceReconciler struct {
 }
 
 // NewReconciler returns a new reconcile.Reconciler
-func NewReconciler(mgr manager.Manager, env *bootstrap.Environment) *ServicefenceReconciler {
+func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env *bootstrap.Environment) *ServicefenceReconciler {
 	log := log.WithField("serviceFence", "newReconciler")
 
 	r := &ServicefenceReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
+		cfg:               cfg,
 		env:               env,
 		staleNamespaces:   map[string]bool{},
 		enabledNamespaces: map[string]bool{},
