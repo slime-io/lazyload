@@ -265,12 +265,16 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 
 	for mk := range host.Status.MetricStatus {
 		mk = strings.Trim(mk, "{}")
-		if strings.HasPrefix(mk, "destination_service") {
+		if strings.HasPrefix(mk, "destination_service") || strings.HasPrefix(mk, "request_host") {
 			ss := strings.Split(mk, "\"")
 			if len(ss) != 3 {
 				continue
 			} else {
 				k := ss[1]
+				// remove port
+				if strings.Contains(k, ":") {
+					k = strings.Split(k, ":")[0]
+				}
 				ks := strings.Split(k, ".")
 				unityHost := k
 				if len(ks) == 1 {
