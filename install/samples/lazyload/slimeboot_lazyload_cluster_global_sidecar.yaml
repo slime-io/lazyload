@@ -1,0 +1,53 @@
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  image:
+    pullPolicy: Always
+    repository: docker.io/slimeio/slime-lazyload
+    tag: v0.2.6-d808438
+  module:
+    - fence:
+        enable: true
+        wormholePort:
+          - "9080"
+      name: slime-fence
+      global:
+        misc:
+          global-sidecar-mode: cluster
+      metric:
+        prometheus:
+          address: http://prometheus.istio-system:9090
+          handlers:
+            destination:
+              query: |
+                sum(istio_requests_total{source_app="$source_app",reporter="destination"})by(destination_service)
+              type: Group
+  component:
+    globalSidecar:
+      enable: true
+      type: cluster
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 200Mi
+      image:
+        repository: istio/proxyv2
+        tag: 1.7.0
+    pilot:
+      enable: true
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 800Mi
+      image:
+        repository: docker.io/slimeio/pilot
+        tag: globalPilot-7.0-v0.0.3-833f1bd5c1
