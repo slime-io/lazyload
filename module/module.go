@@ -2,9 +2,9 @@ package module
 
 import (
 	"os"
+	"slime.io/slime/framework/model/module"
 
 	"github.com/golang/protobuf/proto"
-	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -14,12 +14,12 @@ import (
 	"slime.io/slime/framework/apis/config/v1alpha1"
 	"slime.io/slime/framework/bootstrap"
 	basecontroller "slime.io/slime/framework/controllers"
-	"slime.io/slime/framework/model"
 	lazyloadapiv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 	"slime.io/slime/modules/lazyload/controllers"
+	modmodel "slime.io/slime/modules/lazyload/model"
 )
 
-const Name = "lazyload"
+var log = modmodel.ModuleLog
 
 type Module struct {
 	config v1alpha1.Fence
@@ -30,7 +30,7 @@ func (m *Module) Config() proto.Message {
 }
 
 func (m *Module) Name() string {
-	return Name
+	return modmodel.ModuleName
 }
 
 func (m *Module) InitScheme(scheme *runtime.Scheme) error {
@@ -46,7 +46,7 @@ func (m *Module) InitScheme(scheme *runtime.Scheme) error {
 	return nil
 }
 
-func (m *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cbs model.ModuleInitCallbacks) error {
+func (m *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cbs module.InitCallbacks) error {
 	cfg := &m.config
 	if env.Config != nil && env.Config.Fence != nil {
 		cfg = env.Config.Fence
