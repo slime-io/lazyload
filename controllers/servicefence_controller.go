@@ -20,11 +20,11 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slime.io/slime/framework/model"
 	"strings"
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"slime.io/slime/framework/apis/config/v1alpha1"
 
 	istio "istio.io/api/networking/v1alpha3"
@@ -48,6 +48,7 @@ import (
 	"slime.io/slime/framework/util"
 
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
+	modmodel "slime.io/slime/modules/lazyload/model"
 )
 
 // ServicefenceReconciler reconciles a Servicefence object
@@ -65,7 +66,7 @@ type ServicefenceReconciler struct {
 
 // NewReconciler returns a new reconcile.Reconciler
 func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env *bootstrap.Environment) *ServicefenceReconciler {
-	log := log.WithField("serviceFence", "newReconciler")
+	log := modmodel.ModuleLog.WithField(model.LogFieldKeyFunction, "NewReconciler")
 
 	r := &ServicefenceReconciler{
 		Client:            mgr.GetClient(),
@@ -98,7 +99,7 @@ func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env *bootstrap.Envi
 
 func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	_ = context.Background()
-	log := log.WithField("serviceFence", req.NamespacedName)
+	log := modmodel.ModuleLog.WithField(model.LogFieldKeyResource, req.NamespacedName)
 
 	// Fetch the ServiceFence instance
 	instance := &lazyloadv1alpha1.ServiceFence{}

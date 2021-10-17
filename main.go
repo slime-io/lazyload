@@ -17,10 +17,11 @@ limitations under the License.
 package main
 
 import (
-	"slime.io/slime/framework/model"
-	"slime.io/slime/modules/lazyload/module"
+	"slime.io/slime/framework/model/module"
+	"slime.io/slime/modules/lazyload/model"
+	modmodule "slime.io/slime/modules/lazyload/module"
 )
 
 func main() {
-	model.Main(module.Name, []model.Module{&module.Module{}})
+	module.Main(model.ModuleName, []module.Module{&modmodule.Module{}})
 }
