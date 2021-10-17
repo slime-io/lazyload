@@ -25,7 +25,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	"slime.io/slime/slime-framework/apis/config/v1alpha1"
+	"slime.io/slime/framework/apis/config/v1alpha1"
 
 	istio "istio.io/api/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
@@ -39,13 +39,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"slime.io/slime/slime-framework/apis/networking/v1alpha3"
-	"slime.io/slime/slime-framework/bootstrap"
-	"slime.io/slime/slime-framework/controllers"
-	event_source "slime.io/slime/slime-framework/model/source"
-	"slime.io/slime/slime-framework/model/source/aggregate"
-	"slime.io/slime/slime-framework/model/source/k8s"
-	"slime.io/slime/slime-framework/util"
+	"slime.io/slime/framework/apis/networking/v1alpha3"
+	"slime.io/slime/framework/bootstrap"
+	"slime.io/slime/framework/controllers"
+	event_source "slime.io/slime/framework/model/source"
+	"slime.io/slime/framework/model/source/aggregate"
+	"slime.io/slime/framework/model/source/k8s"
+	"slime.io/slime/framework/util"
 
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 )
