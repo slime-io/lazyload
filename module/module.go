@@ -10,13 +10,13 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	istioapi "slime.io/slime/framework/apis"
+	"slime.io/slime/framework/apis/config/v1alpha1"
+	"slime.io/slime/framework/bootstrap"
+	basecontroller "slime.io/slime/framework/controllers"
+	"slime.io/slime/framework/model"
 	lazyloadapiv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 	"slime.io/slime/modules/lazyload/controllers"
-	istioapi "slime.io/slime/slime-framework/apis"
-	"slime.io/slime/slime-framework/apis/config/v1alpha1"
-	"slime.io/slime/slime-framework/bootstrap"
-	basecontroller "slime.io/slime/slime-framework/controllers"
-	"slime.io/slime/slime-framework/model"
 )
 
 const Name = "lazyload"

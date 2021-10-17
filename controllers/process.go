@@ -14,7 +14,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 
-	event_source "slime.io/slime/slime-framework/model/source"
+	event_source "slime.io/slime/framework/model/source"
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 )
 
