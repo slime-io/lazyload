@@ -50,4 +50,4 @@ spec:
           memory: 800Mi
       image:
         repository: docker.io/slimeio/pilot
-        tag: globalPilot-7.0-v0.0.3-833f1bd5c1
+        tag: globalPilot-7.0-v0.0.3-713c611962
