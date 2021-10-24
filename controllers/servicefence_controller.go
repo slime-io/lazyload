@@ -20,10 +20,11 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"slime.io/slime/framework/model"
 	"strings"
 	"sync"
 	"time"
+
+	"slime.io/slime/framework/model"
 
 	"slime.io/slime/framework/apis/config/v1alpha1"
 
@@ -108,8 +109,10 @@ func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	r.reconcileLock.Lock()
 	defer r.reconcileLock.Unlock()
 
+	// TODO watch sidecar
 	if err != nil {
 		if errors.IsNotFound(err) {
+			// TODO should be recovered? maybe we should call refreshFenceStatusOfService here
 			log.Info("serviceFence is deleted")
 			r.source.WatchRemove(req.NamespacedName)
 			return reconcile.Result{}, nil
@@ -118,7 +121,13 @@ func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			return reconcile.Result{}, err
 		}
 	}
-	log.Infof("get serviceFence, %+v", instance.Name)
+
+	if rev := model.IstioRevFromLabel(instance.Labels); !r.env.RevInScope(rev) { // remove watch ?
+		log.Infof("exsiting sf %v istioRev %s but our %s, skip...",
+			req.NamespacedName, rev, r.env.IstioRev())
+		return reconcile.Result{}, nil
+	}
+	log.Infof("get serviceFence, %+v", req.NamespacedName)
 
 	// 资源更新
 	diff := r.updateVisitedHostStatus(instance)
@@ -147,16 +156,33 @@ func (r *ServicefenceReconciler) refreshSidecar(instance *lazyloadv1alpha1.Servi
 		log.Errorf("attach ownerReference to sidecar failed, %+v", err)
 		return err
 	}
+	sfRev := model.IstioRevFromLabel(instance.Labels)
+	model.PatchIstioRevLabel(&sidecar.Labels, sfRev)
+
 	// Check if this Pod already exists
 	found := &v1alpha3.Sidecar{}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: sidecar.Name, Namespace: sidecar.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
+	nsName := types.NamespacedName{Name: sidecar.Name, Namespace: sidecar.Namespace}
+	err = r.Client.Get(context.TODO(), nsName, found)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			found = nil
+			err = nil
+		} else {
+			return err
+		}
+	}
+
+	if found == nil {
 		log.Infof("Creating a new Sidecar in %s:%s", sidecar.Namespace, sidecar.Name)
 		err = r.Client.Create(context.TODO(), sidecar)
 		if err != nil {
 			return err
 		}
-	} else if err == nil {
+	} else if rev := model.IstioRevFromLabel(found.Labels); rev != sfRev {
+		log.Infof("existed sidecar %v istioRev %s but our rev %s, skip update ...",
+			nsName, rev, sfRev)
+	} else {
 		if !reflect.DeepEqual(found.Spec, sidecar.Spec) {
 			log.Infof("Update a Sidecarin %s:%s", sidecar.Namespace, sidecar.Name)
 			sidecar.ResourceVersion = found.ResourceVersion
@@ -166,143 +192,166 @@ func (r *ServicefenceReconciler) refreshSidecar(instance *lazyloadv1alpha1.Servi
 			}
 		}
 	}
+
 	return nil
 }
 
-func (r *ServicefenceReconciler) recordVisitor(host *lazyloadv1alpha1.ServiceFence, diff Diff) {
-	for _, k := range diff.Added {
-		vih := r.prepare(host, k)
-		if vih == nil {
+// recordVisitor update the dest servicefences' visitor according to src sf's visit diff
+func (r *ServicefenceReconciler) recordVisitor(sf *lazyloadv1alpha1.ServiceFence, diff Diff) {
+	for _, addHost := range diff.Added {
+		destSf := r.prepareDestFence(sf, addHost)
+		if destSf == nil {
 			continue
 		}
-		vih.Status.Visitor[host.Namespace+"/"+host.Name] = true
-		_ = r.Client.Status().Update(context.TODO(), vih)
+		destSf.Status.Visitor[sf.Namespace+"/"+sf.Name] = true
+		_ = r.Client.Status().Update(context.TODO(), destSf)
 	}
 
-	for _, k := range diff.Deleted {
-		vih := r.prepare(host, k)
-		if vih == nil {
+	for _, delHost := range diff.Deleted {
+		destSf := r.prepareDestFence(sf, delHost)
+		if destSf == nil {
 			continue
 		}
-		delete(vih.Status.Visitor, host.Namespace+"/"+host.Name)
-		_ = r.Client.Status().Update(context.TODO(), vih)
+		delete(destSf.Status.Visitor, sf.Namespace+"/"+sf.Name)
+		_ = r.Client.Status().Update(context.TODO(), destSf)
 	}
 }
 
-func (r *ServicefenceReconciler) prepare(host *lazyloadv1alpha1.ServiceFence, n string) *lazyloadv1alpha1.ServiceFence {
-	loc := parseHost(host.Namespace, n)
-	if loc == nil {
+// prepareDestFence prepares servicefence of specified host
+func (r *ServicefenceReconciler) prepareDestFence(srcSf *lazyloadv1alpha1.ServiceFence, h string) *lazyloadv1alpha1.ServiceFence {
+	nsName := parseHost(srcSf.Namespace, h)
+	if nsName == nil {
 		return nil
 	}
+
 	svc := &corev1.Service{}
-	if err := r.Client.Get(context.TODO(), *loc, svc); err != nil {
+	if err := r.Client.Get(context.TODO(), *nsName, svc); err != nil {
+		// XXX err handle
 		return nil
 	}
-	vih := &lazyloadv1alpha1.ServiceFence{}
-retry:
-	if err := r.Client.Get(context.TODO(), *loc, vih); err != nil {
+
+	destSf := &lazyloadv1alpha1.ServiceFence{}
+retry: // FIXME fix infinite loop
+	err := r.Client.Get(context.TODO(), *nsName, destSf)
+	if err != nil {
 		if errors.IsNotFound(err) {
-			vih.Name = loc.Name
-			vih.Namespace = loc.Namespace
-			if err = r.Client.Create(context.TODO(), vih); err != nil {
+			// XXX maybe should not auto create
+			destSf.Name = nsName.Name
+			destSf.Namespace = nsName.Namespace
+			// XXX set controlled by
+			// XXX patch rev
+			if err = r.Client.Create(context.TODO(), destSf); err != nil {
 				goto retry
 			}
+		} else {
+			return nil
 		}
 	}
 
-	if vih.Status.Visitor == nil {
-		vih.Status.Visitor = make(map[string]bool)
+	if destSf.Status.Visitor == nil {
+		destSf.Status.Visitor = make(map[string]bool)
 	}
-	return vih
+	return destSf
 }
 
-func parseHost(locNs, h string) *types.NamespacedName {
+func parseHost(sourceNs, h string) *types.NamespacedName {
 	s := strings.Split(h, ".")
-	if len(s) == 5 || len(s) == 2 {
+	if len(s) == 5 || len(s) == 2 { // shortname.ns or full(shortname.ns.svc.cluster.local)
 		return &types.NamespacedName{
 			Namespace: s[1],
 			Name:      s[0],
 		}
 	}
-	if len(s) == 1 {
+	if len(s) == 1 { // shortname
 		return &types.NamespacedName{
-			Namespace: locNs,
+			Namespace: sourceNs,
 			Name:      s[0],
 		}
 	}
-	return nil
+	return nil // unknown host format, maybe external host
 }
 
 func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.ServiceFence) Diff {
-	domains := make(map[string]*lazyloadv1alpha1.Destinations)
-	now := time.Now().Unix()
-	for k, v := range host.Spec.Host {
-		allHost := []string{k}
-		if hs := getDestination(k); len(hs) > 0 {
-			allHost = append(allHost, hs...)
-		}
-		var status lazyloadv1alpha1.Destinations_Status
-		if v.Stable != nil {
-			status = lazyloadv1alpha1.Destinations_ACTIVE
-		} else if v.Deadline != nil {
-			if now-v.Deadline.Expire.Seconds > 0 {
-				status = lazyloadv1alpha1.Destinations_EXPIRE
-			} else {
-				status = lazyloadv1alpha1.Destinations_ACTIVE
+	checkStatus := func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status {
+		switch {
+		case strategy.Stable != nil:
+			// ...
+		case strategy.Deadline != nil:
+			if now > strategy.Deadline.Expire.Seconds {
+				return lazyloadv1alpha1.Destinations_EXPIRE
 			}
-		} else if v.Auto != nil {
-			if v.RecentlyCalled == nil {
-				status = lazyloadv1alpha1.Destinations_ACTIVE
-			} else {
-				if now-v.RecentlyCalled.Seconds > v.Auto.Duration.Seconds {
-					status = lazyloadv1alpha1.Destinations_EXPIRE
-				} else {
-					status = lazyloadv1alpha1.Destinations_ACTIVE
+		case strategy.Auto != nil:
+			if strategy.RecentlyCalled != nil {
+				if now-strategy.RecentlyCalled.Seconds > strategy.Auto.Duration.Seconds {
+					return lazyloadv1alpha1.Destinations_EXPIRE
 				}
 			}
 		}
-		domains[k] = &lazyloadv1alpha1.Destinations{
+		return lazyloadv1alpha1.Destinations_ACTIVE
+	}
+
+	domains := make(map[string]*lazyloadv1alpha1.Destinations)
+	now := time.Now().Unix()
+
+	// update status of destinations of hosts with config
+	for h, strategy := range host.Spec.Host {
+		allHost := []string{h}
+		if hs := getDestination(h); len(hs) > 0 {
+			allHost = append(allHost, hs...)
+		}
+
+		domains[h] = &lazyloadv1alpha1.Destinations{
 			Hosts:  allHost,
-			Status: status,
+			Status: checkStatus(now, strategy),
 		}
 	}
 
-	for mk := range host.Status.MetricStatus {
-		mk = strings.Trim(mk, "{}")
-		if strings.HasPrefix(mk, "destination_service") || strings.HasPrefix(mk, "request_host") {
-			ss := strings.Split(mk, "\"")
-			if len(ss) != 3 {
-				continue
-			} else {
-				k := ss[1]
-				// remove port
-				if strings.Contains(k, ":") {
-					k = strings.Split(k, ":")[0]
-				}
-				ks := strings.Split(k, ".")
-				unityHost := k
-				if len(ks) == 1 {
-					unityHost = fmt.Sprintf("%s.%s.svc.cluster.local", ks[0], host.Namespace)
-				} else if len(ks) == 2 {
-					unityHost = fmt.Sprintf("%s.%s.svc.cluster.local", ks[0], ks[1])
-				}
-				if !isValidHost(unityHost) {
-					continue
-				}
-				if domains[unityHost] != nil {
-					continue
-				}
-				allHost := []string{unityHost}
-				if hs := getDestination(unityHost); len(hs) > 0 {
-					allHost = append(allHost, hs...)
-				}
-				domains[k] = &lazyloadv1alpha1.Destinations{
-					Hosts:  allHost,
-					Status: lazyloadv1alpha1.Destinations_ACTIVE,
-				}
+	// update status with metric status
+	// -> (visited)host -> destinations
+	for metricName := range host.Status.MetricStatus {
+		metricName = strings.Trim(metricName, "{}")
+		if !strings.HasPrefix(metricName, "destination_service") && !strings.HasPrefix(metricName, "request_host") {
+			continue
+		}
+		// destination_service format like: "grafana.istio-system.svc.cluster.local"
+
+		var h, fullHost string
+		// trim ""
+		if ss := strings.Split(metricName, "\""); len(ss) != 3 {
+			continue
+		} else {
+			// remove port
+			h = strings.SplitN(ss[1], ":", 2)[0]
+		}
+
+		fullHost = h
+		{
+			subDomains := strings.Split(h, ".")
+			if len(subDomains) == 1 { // shortname
+				fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], host.Namespace)
+			} else if len(subDomains) == 2 { // shortname.ns
+				fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], subDomains[1])
 			}
 		}
+
+		if !isValidHost(fullHost) {
+			continue
+		}
+		if domains[fullHost] != nil { // XXX merge with status from config
+			continue
+		}
+
+		allHost := []string{fullHost}
+		if hs := getDestination(fullHost); len(hs) > 0 {
+			allHost = append(allHost, hs...)
+		}
+
+		domains[h] = &lazyloadv1alpha1.Destinations{
+			Hosts:  allHost,
+			Status: lazyloadv1alpha1.Destinations_ACTIVE,
+		}
 	}
+
 	delta := Diff{
 		Deleted: make([]string, 0),
 		Added:   make([]string, 0),
@@ -318,7 +367,9 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 		}
 	}
 	host.Status.Domains = domains
+
 	_ = r.Client.Status().Update(context.TODO(), host)
+
 	return delta
 }
 
@@ -353,63 +404,103 @@ func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env *bootstrap.Environment
 			},
 		},
 	}
-	if spec, err := util.ProtoToMap(sidecar); err == nil {
-		ret := &v1alpha3.Sidecar{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      vhost.Name,
-				Namespace: vhost.Namespace,
-			},
-			Spec: spec,
-		}
-		return ret, nil
-	} else {
+
+	spec, err := util.ProtoToMap(sidecar)
+	if err != nil {
 		return nil, err
 	}
+	ret := &v1alpha3.Sidecar{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      vhost.Name,
+			Namespace: vhost.Namespace,
+		},
+		Spec: spec,
+	}
+	return ret, nil
 }
 
-func (r *ServicefenceReconciler) Subscribe(host string, destination interface{}) {
-	if svc, namespace, ok := util.IsK8SService(host); ok {
-		vih := &lazyloadv1alpha1.ServiceFence{}
-		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: svc, Namespace: namespace}, vih); err != nil {
+func (r *ServicefenceReconciler) Subscribe(host string, destination interface{}) { // FIXME not used?
+	svc, namespace, ok := util.IsK8SService(host)
+	if !ok {
+		return
+	}
+
+	sf := &lazyloadv1alpha1.ServiceFence{}
+	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: svc, Namespace: namespace}, sf); err != nil {
+		return
+	}
+	istioRev := model.IstioRevFromLabel(sf.Labels)
+	if !r.env.RevInScope(istioRev) {
+		return
+	}
+
+	for k := range sf.Status.Visitor {
+		i := strings.Index(k, "/")
+		if i < 0 {
+			continue
+		}
+
+		visitorSf := &lazyloadv1alpha1.ServiceFence{}
+		visitorNamespace := k[:i]
+		visitorName := k[i+1:]
+
+		err := r.Client.Get(context.TODO(), types.NamespacedName{Name: visitorName, Namespace: visitorNamespace}, visitorSf)
+		if err != nil {
 			return
 		}
-		for k := range vih.Status.Visitor {
-			if i := strings.Index(k, "/"); i != -1 {
-				visitorVih := &lazyloadv1alpha1.ServiceFence{}
-				visitorNamespace := k[:i]
-				visitorName := k[i+1:]
-				err := r.Client.Get(context.TODO(), types.NamespacedName{Name: visitorName, Namespace: visitorNamespace}, visitorVih)
-				if err != nil {
-					return
-				}
-				r.updateVisitedHostStatus(visitorVih)
-				sidecarScope, err := newSidecar(visitorVih, r.env)
-				if sidecarScope == nil {
-					continue
-				}
-				if err != nil {
-					return
-				}
-				// Set VisitedHost instance as the owner and controller
-				if err := controllerutil.SetControllerReference(visitorVih, sidecarScope, r.Scheme); err != nil {
-					return
-				}
+		visitorRev := model.IstioRevFromLabel(visitorSf.Labels)
+		if !r.env.RevInScope(visitorRev) {
+			return
+		}
 
-				// Check if this Pod already exists
-				found := &v1alpha3.Sidecar{}
-				err = r.Client.Get(context.TODO(), types.NamespacedName{Name: sidecarScope.Name, Namespace: sidecarScope.Namespace}, found)
-				if err != nil && errors.IsNotFound(err) {
-					err = r.Client.Create(context.TODO(), sidecarScope)
-					return
-				} else if err != nil {
-					if !reflect.DeepEqual(found.Spec, sidecarScope.Spec) {
-						sidecarScope.ResourceVersion = found.ResourceVersion
-						err = r.Client.Update(context.TODO(), sidecarScope)
-					}
-					return
+		r.updateVisitedHostStatus(visitorSf)
+
+		sidecar, err := newSidecar(visitorSf, r.env)
+		if sidecar == nil {
+			continue
+		}
+		if err != nil {
+			return
+		}
+
+		// Set VisitedHost instance as the owner and controller
+		if err := controllerutil.SetControllerReference(visitorSf, sidecar, r.Scheme); err != nil {
+			return
+		}
+		model.PatchIstioRevLabel(&sidecar.Labels, visitorRev)
+
+		// Check for existence
+		found := &v1alpha3.Sidecar{}
+		nsName := types.NamespacedName{Name: sidecar.Name, Namespace: sidecar.Namespace}
+		err = r.Client.Get(context.TODO(), nsName, found)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				found = nil
+				err = nil
+			} else {
+				return
+			}
+		}
+
+		if found == nil {
+			err = r.Client.Create(context.TODO(), sidecar)
+			if err != nil {
+				log.Errorf("create sidecar %+v met err %v", sidecar, err)
+			}
+		} else if scRev := model.IstioRevFromLabel(found.Labels); scRev != visitorRev {
+			log.Infof("existing sidecar %v istioRev %s but our %s, skip ...",
+				nsName, scRev, visitorRev)
+		} else {
+			if !reflect.DeepEqual(found.Spec, sidecar.Spec) {
+				sidecar.ResourceVersion = found.ResourceVersion
+				err = r.Client.Update(context.TODO(), sidecar)
+
+				if err != nil {
+					log.Errorf("create sidecar %+v met err %v", sidecar, err)
 				}
 			}
 		}
+		return
 	}
 	return
 }

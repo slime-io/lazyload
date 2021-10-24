@@ -10,6 +10,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"slime.io/slime/framework/model"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 
@@ -44,28 +45,43 @@ func (r *ServicefenceReconciler) WatchSource(stop <-chan struct{}) {
 	}()
 }
 
-func (r *ServicefenceReconciler) Refresh(request reconcile.Request, args map[string]string) (reconcile.Result, error) {
-	svf := &lazyloadv1alpha1.ServiceFence{}
-	err := r.Client.Get(context.TODO(), request.NamespacedName, svf)
-	if err != nil && errors.IsNotFound(err) {
-		log.Info("ServiceFence Not Found, skip")
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		log.Errorf("can not get ServiceFence %s, %+v", request.NamespacedName.Name, err)
-		return reconcile.Result{}, err
-	} else {
-		if svf.Spec.Enable {
-			r.refreshSidecar(svf)
-		}
+func (r *ServicefenceReconciler) Refresh(req reconcile.Request, args map[string]string) (reconcile.Result, error) {
+	sf := &lazyloadv1alpha1.ServiceFence{}
+	err := r.Client.Get(context.TODO(), req.NamespacedName, sf)
 
-		svf.Status.MetricStatus = args
-		err = r.Client.Status().Update(context.TODO(), svf)
-		if err != nil {
-			log.Errorf("can not update ServiceFence %s, %+v", request.NamespacedName.Name, err)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			sf = nil
+			err = nil
+		} else {
+			log.Errorf("can not get ServiceFence %s, %+v", req.NamespacedName.Name, err)
 			return reconcile.Result{}, err
 		}
+	}
+
+	if sf == nil {
+		log.Info("ServiceFence Not Found, skip")
+		return reconcile.Result{}, nil
+	} else if rev := model.IstioRevFromLabel(sf.Labels); !r.env.RevInScope(rev) {
+		log.Infof("existing sf %v istioRev %s but our %s, skip ...",
+			req.NamespacedName, rev, r.env.IstioRev())
 		return reconcile.Result{}, nil
 	}
+
+	if sf.Spec.Enable {
+		if err := r.refreshSidecar(sf); err != nil {
+			// XXX return err?
+			log.Errorf("refresh sf %v met err %v", req.NamespacedName, err)
+		}
+	}
+
+	sf.Status.MetricStatus = args
+	err = r.Client.Status().Update(context.TODO(), sf)
+	if err != nil {
+		log.Errorf("can not update ServiceFence %s, %+v", req.NamespacedName.Name, err)
+		return reconcile.Result{}, err
+	}
+	return reconcile.Result{}, nil
 }
 
 func (r *ServicefenceReconciler) isServiceFenced(ctx context.Context, svc *corev1.Service) bool {
@@ -174,7 +190,7 @@ func (r *ServicefenceReconciler) ReconcileNamespace(req ctrl.Request) (ret ctrl.
 	return ctrl.Result{}, nil
 }
 
-// refreshFenceStatusOfService caller should held the reconcile lock.
+// refreshFenceStatusOfService caller should hold the reconcile lock.
 func (r *ServicefenceReconciler) refreshFenceStatusOfService(ctx context.Context, svc *corev1.Service, nsName types.NamespacedName) (reconcile.Result, error) {
 	if svc == nil {
 		// Fetch the Service instance
@@ -220,11 +236,15 @@ func (r *ServicefenceReconciler) refreshFenceStatusOfService(ctx context.Context
 				},
 			}
 			markFenceCreatedByController(sf)
+			model.PatchIstioRevLabel(&sf.Labels, r.env.IstioRev())
 			if err := r.Client.Create(ctx, sf); err != nil {
 				log.Errorf("create fence %s failed, %+v", nsName, err)
 				return reconcile.Result{}, err
 			}
 		}
+	} else if rev := model.IstioRevFromLabel(sf.Labels); !r.env.RevInScope(rev) {
+		log.Errorf("existed fence %v istioRev %s but our rev %s, skip ...",
+			nsName, rev, r.env.IstioRev())
 	} else if isFenceCreatedByController(sf) && (svc == nil || !r.isServiceFenced(ctx, svc)) {
 		if err := r.Client.Delete(ctx, sf); err != nil {
 			log.Errorf("delete fence %s failed, %+v", nsName, err)
