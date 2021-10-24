@@ -2,6 +2,7 @@ package module
 
 import (
 	"os"
+
 	"slime.io/slime/framework/model/module"
 
 	"github.com/golang/protobuf/proto"
@@ -60,6 +61,7 @@ func (m *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cbs
 	}).Add(basecontroller.ObjectReconcileItem{
 		Name: "VirtualService",
 		R: &basecontroller.VirtualServiceReconciler{
+			Env:    &env,
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 		},
