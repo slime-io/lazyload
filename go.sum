@@ -294,6 +294,7 @@ github.com/sirupsen/logrus v1.4.2 h1:SPIRibHv4MatM3XXNO2BJeFLZwZ2LvZgfQ5+UNI2im4
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
 github.com/slime-io/slime/framework v0.3.0 h1:JtW0qqiv3ikUotIsJhTKUqDyHRlK54R4OptOpwCGAdM=
 github.com/slime-io/slime/framework v0.3.0/go.mod h1:Arv+tpfmdWWzxEBYHnhj9FZEgcLH+mYo5KumxMKrHqg=
+github.com/slime-io/slime/framework v0.3.1/go.mod h1:Arv+tpfmdWWzxEBYHnhj9FZEgcLH+mYo5KumxMKrHqg=
 github.com/slime-io/slime/slime-framework v0.0.0-20211014020149-a1fd0b4fc677 h1:UZi/ll12jdFpUY8+7yVJyCNTNAFuQLbfN73xF7QIw7s=
 github.com/slime-io/slime/slime-framework v0.0.0-20211014020149-a1fd0b4fc677/go.mod h1:pushZ/nY9/O8cmf5fr3eQnX4eRHYwCUauyG6i8FlRdY=
 github.com/soheilhy/cmux v0.1.4/go.mod h1:IM3LyeVVIOuxMH7sFAkER9+bJ4dT7Ms6E4xg4kGIyLM=
