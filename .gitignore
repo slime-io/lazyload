@@ -22,3 +22,6 @@ bin
 *.swp
 *.swo
 *~
+
+# test e2e
+test/e2e/reports

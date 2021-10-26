@@ -23,6 +23,9 @@ spec:
               query: |
                 sum(istio_requests_total{source_app="$source_app",reporter="destination"})by(destination_service)
               type: Group
+      global:
+        istioRev: {{istioRevValue}}
+        strictRev: true
   component:
     globalSidecar:
       enable: true
