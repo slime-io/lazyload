@@ -6,6 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slime.io/slime/framework/test/e2e/framework"
 	e2epod "slime.io/slime/framework/test/e2e/framework/pod"
@@ -18,25 +19,44 @@ var _ = ginkgo.Describe("Slime e2e test", func() {
 	f := framework.NewDefaultFramework("lazyload")
 	f.SkipNamespaceCreation = true
 
-	ginkgo.It("slime module lazyload works", func() {
-		//create ns
+	ginkgo.It("clean resource", func() {
+		var cmd *exec.Cmd
+		cmd = exec.Command("bash", "lazyload_test_clean.sh")
+		_, err := cmd.Output()
+		framework.ExpectNoError(err)
+	})
+
+	ginkgo.It("rev: strictRev=true lazyload works", func() {
 		_, err := f.CreateNamespace(nsSlime, nil)
 		framework.ExpectNoError(err)
-		if framework.TestContext.IstioRevison != "" {
-			istiodLabelV = framework.TestContext.IstioRevison
-		}
-		_, err = f.CreateNamespace(nsApps, map[string]string{istiodLabelKey: istiodLabelV})
+		_, err = f.CreateNamespace(nsApps, map[string]string{istioRevKey: substituteValue("istioRevValue", istioRevValue)})
 		framework.ExpectNoError(err)
 
+		strictRev := true
 		createSlimeBoot(f)
-		createSlimeModuleLazyload(f)
+		createSlimeModuleLazyload(f, strictRev)
 		createExampleApps(f)
-		createServiceFence(f)
+		createServiceFence(f, strictRev)
 		updateSidecar(f)
 		verifyAccessLogs(f)
 		deleteTestResource()
 	})
 
+	ginkgo.It("no-rev: strictRev=false lazyload works", func() {
+		_, err := f.CreateNamespace(nsSlime, nil)
+		framework.ExpectNoError(err)
+		_, err = f.CreateNamespace(nsApps, map[string]string{istioRevKey: substituteValue("istioRevValue", istioRevValue)})
+		framework.ExpectNoError(err)
+
+		strictRev := false
+		createSlimeBoot(f)
+		createSlimeModuleLazyload(f, strictRev)
+		createExampleApps(f)
+		createServiceFence(f, strictRev)
+		updateSidecar(f)
+		verifyAccessLogs(f)
+		deleteTestResource()
+	})
 })
 
 func createSlimeBoot(f *framework.Framework) {
@@ -79,14 +99,19 @@ func createSlimeBoot(f *framework.Framework) {
 	ginkgo.By("deployment slimeboot installs successfully")
 }
 
-func createSlimeModuleLazyload(f *framework.Framework) {
+func createSlimeModuleLazyload(f *framework.Framework, strictRev bool) {
 	cs := f.ClientSet
 
-	// create slimeboot/lazyload
 	slimebootLazyloadYaml := readFile(test, "samples/lazyload/slimeboot_lazyload.yaml")
 	slimebootLazyloadYaml = strings.ReplaceAll(slimebootLazyloadYaml, "{{lazyloadTag}}", substituteValue("lazyloadTag", lazyloadTag))
 	slimebootLazyloadYaml = strings.ReplaceAll(slimebootLazyloadYaml, "{{globalSidecarTag}}", substituteValue("globalSidecarTag", globalSidecarTag))
 	slimebootLazyloadYaml = strings.ReplaceAll(slimebootLazyloadYaml, "{{globalSidecarPilotTag}}", substituteValue("globalSidecarPilotTag", globalSidecarPilotTag))
+	slimebootLazyloadYaml = strings.ReplaceAll(slimebootLazyloadYaml, "{{istioRevValue}}", substituteValue("istioRevValue", istioRevValue))
+	if strictRev {
+		slimebootLazyloadYaml = strings.ReplaceAll(slimebootLazyloadYaml, "{{strictRev}}", "true")
+	} else {
+		slimebootLazyloadYaml = strings.ReplaceAll(slimebootLazyloadYaml, "{{strictRev}}", "false")
+	}
 	framework.RunKubectlOrDieInput(nsSlime, slimebootLazyloadYaml, "create", "-f", "-")
 	defer func() {
 		testResourceToDelete = append(testResourceToDelete, &TestResource{Namespace: nsSlime, Contents: slimebootLazyloadYaml})
@@ -172,19 +197,16 @@ func createExampleApps(f *framework.Framework) {
 	ginkgo.By("example apps install successfully")
 }
 
-func createServiceFence(f *framework.Framework) {
-	svfGroup := "microservice.slime.io"
-	svfVersion := "v1alpha1"
-	svfResource := "servicefences"
-	svfName := "productpage"
-
-	sidecarGroup := "networking.istio.io"
-	sidecarVersion := "v1beta1"
-	sidecarResource := "sidecars"
-	sidecarName := "productpage"
+func createServiceFence(f *framework.Framework, strictRev bool) {
 
 	// create CR ServiceFence
 	serviceFenceYaml := readFile(test, "samples/lazyload/servicefence_productpage.yaml")
+	serviceFenceYaml = strings.ReplaceAll(serviceFenceYaml, "{{istioRevKey}}", substituteValue("istioRevKey", istioRevKey))
+	if strictRev {
+		serviceFenceYaml = strings.ReplaceAll(serviceFenceYaml, "{{istioRevValue}}", substituteValue("strictRev", istioRevValue))
+	} else {
+		serviceFenceYaml = strings.ReplaceAll(serviceFenceYaml, "{{istioRevValue}}", "")
+	}
 	framework.RunKubectlOrDieInput(nsApps, serviceFenceYaml, "create", "-f", "-")
 	defer func() {
 		testResourceToDelete = append(testResourceToDelete, &TestResource{Namespace: nsApps, Contents: serviceFenceYaml})
@@ -199,10 +221,13 @@ func createServiceFence(f *framework.Framework) {
 
 	svfCreated := false
 	for i := 0; i < 60; i++ {
-		_, err := f.DynamicClient.Resource(svfGvr).Namespace(nsApps).Get(svfName, metav1.GetOptions{})
+		svf, err := f.DynamicClient.Resource(svfGvr).Namespace(nsApps).Get(svfName, metav1.GetOptions{})
 		if err != nil {
 			time.Sleep(500 * time.Millisecond)
 			continue
+		}
+		if (strictRev && svf.GetLabels()[istioRevKey] != istioRevValue) || (!strictRev && svf.GetLabels()[istioRevKey] != "") {
+			framework.Failf("The created servicefence has wrong istioRev label %s.\n", svf.GetLabels()[istioRevKey])
 		}
 		svfCreated = true
 		break
@@ -219,10 +244,13 @@ func createServiceFence(f *framework.Framework) {
 
 	sidecarCreated := false
 	for i := 0; i < 60; i++ {
-		_, err := f.DynamicClient.Resource(sidecarGvr).Namespace(nsApps).Get(sidecarName, metav1.GetOptions{})
+		sidecar, err := f.DynamicClient.Resource(sidecarGvr).Namespace(nsApps).Get(sidecarName, metav1.GetOptions{})
 		if err != nil {
 			time.Sleep(500 * time.Millisecond)
 			continue
+		}
+		if (strictRev && sidecar.GetLabels()[istioRevKey] != istioRevValue) || (!strictRev && sidecar.GetLabels()[istioRevKey] != "") {
+			framework.Failf("The created sidecar has wrong istioRev label %s.\n", sidecar.GetLabels()[istioRevKey])
 		}
 		sidecarCreated = true
 		break
@@ -235,10 +263,6 @@ func createServiceFence(f *framework.Framework) {
 }
 
 func updateSidecar(f *framework.Framework) {
-	sidecarGroup := "networking.istio.io"
-	sidecarVersion := "v1beta1"
-	sidecarResource := "sidecars"
-	sidecarName := "productpage"
 
 	pods, err := f.ClientSet.CoreV1().Pods(nsApps).List(metav1.ListOptions{})
 	framework.ExpectNoError(err)

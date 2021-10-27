@@ -6,6 +6,7 @@
   - [安装和使用](#安装和使用)
   - [其他特性介绍](#其他特性介绍)
   - [完整使用样例](#完整使用样例)
+  - [E2E测试介绍](#e2e测试介绍)
   - [ServiceFence说明](#servicefence说明)
 
 
@@ -82,6 +83,14 @@ lazyload目前有三种使用模式：
 ## 完整使用样例
 
 详见 [示例: 为bookinfo的productpage服务开启懒加载](./lazyload_tutorials_zh.md#%E7%A4%BA%E4%BE%8B)
+
+
+
+## E2E测试介绍
+
+在进行功能开发时，可以通过E2E测试验证模块功能正确性。
+
+详见 [E2E测试教程](https://github.com/slime-io/slime/blob/master/doc/zh/slime_e2e_test_zh.md)
 
 
 
