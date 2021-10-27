@@ -6,6 +6,7 @@
   - [Install & Use](#install--use)
   - [Introduction of other features](#introduction-of-other-features)
   - [Example](#example)
+  - [E2E Test Introduction](#e2e-test-introduction)
   - [ServiceFence Instruction](#servicefence-instruction)
 
 # Lazyload Overview
@@ -83,6 +84,14 @@ Details at [Introduction of other features](./lazyload_tutorials.md#Introduction
 ## Example
 
 Details at [Example](./lazyload_tutorials.md#Example)
+
+
+
+## E2E Test Introduction
+
+When developmenting, the module function can be verified correctly through E2E testing.
+
+Details at [E2E Test Tutorials](https://github.com/slime-io/slime/blob/master/doc/en/slime_e2e_test.md)
 
 
 
