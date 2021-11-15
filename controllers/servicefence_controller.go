@@ -26,6 +26,7 @@ import (
 	"slime.io/slime/framework/apis/config/v1alpha1"
 	"slime.io/slime/framework/model/metric"
 	"slime.io/slime/framework/model/trigger"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -525,6 +526,9 @@ func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env bootstrap.Environment)
 			}
 		}
 	}
+	// sort host to avoid map range random feature resulting in sidecar constant updates
+	sort.Strings(host)
+
 	// 需要加入一条根namespace的策略
 	host = append(host, env.Config.Global.IstioNamespace+"/*")
 	host = append(host, env.Config.Global.SlimeNamespace+"/*")
