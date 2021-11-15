@@ -19,14 +19,18 @@ package controllers
 import (
 	"context"
 	"fmt"
+	prometheusApi "github.com/prometheus/client_golang/api"
+	prometheusV1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"reflect"
+	"slime.io/slime/framework/apis/config/v1alpha1"
+	"slime.io/slime/framework/model/metric"
+	"slime.io/slime/framework/model/trigger"
 	"strings"
 	"sync"
 	"time"
 
 	"slime.io/slime/framework/model"
-
-	"slime.io/slime/framework/apis/config/v1alpha1"
 
 	istio "istio.io/api/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
@@ -43,11 +47,9 @@ import (
 	"slime.io/slime/framework/apis/networking/v1alpha3"
 	"slime.io/slime/framework/bootstrap"
 	"slime.io/slime/framework/controllers"
-	event_source "slime.io/slime/framework/model/source"
-	"slime.io/slime/framework/model/source/aggregate"
-	"slime.io/slime/framework/model/source/k8s"
 	"slime.io/slime/framework/util"
 
+	stderrors "errors"
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 	modmodel "slime.io/slime/modules/lazyload/model"
 )
@@ -57,41 +59,51 @@ type ServicefenceReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
 	cfg               *v1alpha1.Fence
-	env               *bootstrap.Environment
-	eventChan         chan event_source.Event
-	source            event_source.Source
-	reconcileLock     sync.Mutex
+	env               bootstrap.Environment
+	interestMeta      map[string]bool
+	interestMetaCopy  map[string]bool // for outside read
+	watcherMetricChan <-chan metric.Metric
+	tickerMetricChan  <-chan metric.Metric
+	reconcileLock     sync.RWMutex
 	staleNamespaces   map[string]bool
 	enabledNamespaces map[string]bool
 }
 
 // NewReconciler returns a new reconcile.Reconciler
-func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env *bootstrap.Environment) *ServicefenceReconciler {
+func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env bootstrap.Environment) *ServicefenceReconciler {
 	log := modmodel.ModuleLog.WithField(model.LogFieldKeyFunction, "NewReconciler")
+
+	// generate producer config
+	pc, err := newProducerConfig(env)
+	if err != nil {
+		log.Errorf("%v", err)
+		return nil
+	}
 
 	r := &ServicefenceReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
-		cfg:               cfg,
 		env:               env,
+		interestMeta:      map[string]bool{},
+		interestMetaCopy:  map[string]bool{},
+		watcherMetricChan: pc.WatcherProducerConfig.MetricChan,
+		tickerMetricChan:  pc.TickerProducerConfig.MetricChan,
 		staleNamespaces:   map[string]bool{},
 		enabledNamespaces: map[string]bool{},
 	}
 
-	if env.Config.Metric != nil {
-		eventChan := make(chan event_source.Event)
-		src := &aggregate.Source{}
-		if ms, err := k8s.NewMetricSource(eventChan, env); err != nil {
-			log.Errorf("failed to create slime-metric, %+v", err)
-		} else {
-			src.Sources = append(src.Sources, ms)
-			r.eventChan = eventChan
-			r.source = src
+	// reconciler defines producer metric handler
+	pc.WatcherProducerConfig.NeedUpdateMetricHandler = r.handleWatcherEvent
+	pc.TickerProducerConfig.NeedUpdateMetricHandler = r.handleTickerEvent
 
-			r.source.Start(env.Stop)
-			r.WatchSource(env.Stop)
-		}
+	// start producer
+	metric.NewProducer(pc)
+	log.Infof("producers starts")
+
+	if env.Config.Metric != nil {
+		go r.WatchMetric()
 	}
+
 	return r
 }
 
@@ -114,8 +126,10 @@ func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		if errors.IsNotFound(err) {
 			// TODO should be recovered? maybe we should call refreshFenceStatusOfService here
 			log.Info("serviceFence is deleted")
-			r.source.WatchRemove(req.NamespacedName)
-			return reconcile.Result{}, nil
+			//r.interestMeta.Pop(req.NamespacedName.String())
+			delete(r.interestMeta, req.NamespacedName.String())
+			r.updateInterestMetaCopy()
+			return r.refreshFenceStatusOfService(context.TODO(), nil, req.NamespacedName)
 		} else {
 			log.Errorf("get serviceFence error,%+v", err)
 			return reconcile.Result{}, err
@@ -127,22 +141,148 @@ func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 			req.NamespacedName, rev, r.env.IstioRev())
 		return reconcile.Result{}, nil
 	}
-	log.Infof("get serviceFence, %+v", req.NamespacedName)
+	log.Infof("ServicefenceReconciler got serviceFence request, %+v", req.NamespacedName)
 
 	// 资源更新
 	diff := r.updateVisitedHostStatus(instance)
 	r.recordVisitor(instance, diff)
 	if instance.Spec.Enable {
-		if r.source != nil {
-			r.source.WatchAdd(types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace})
-		}
+		r.interestMeta[req.NamespacedName.String()] = true
+		r.updateInterestMetaCopy()
 		err = r.refreshSidecar(instance)
 	}
 
 	return ctrl.Result{}, err
 }
 
+func (r *ServicefenceReconciler) updateInterestMetaCopy() {
+	newInterestMeta := make(map[string]bool)
+	for k, v := range r.interestMeta {
+		newInterestMeta[k] = v
+	}
+	r.interestMetaCopy = newInterestMeta
+}
+
+func (r *ServicefenceReconciler) getInterestMeta() map[string]bool {
+	r.reconcileLock.RLock()
+	defer r.reconcileLock.RUnlock()
+	return r.interestMetaCopy
+}
+
+// call back function for watcher producer
+func (r *ServicefenceReconciler) handleWatcherEvent(event trigger.WatcherEvent) metric.QueryMap {
+
+	// check event
+	gvks := []schema.GroupVersionKind{
+		{Group: "networking.istio.io", Version: "v1beta1", Kind: "Sidecar"},
+	}
+	invalidEvent := false
+	for _, gvk := range gvks {
+		if event.GVK == gvk && r.getInterestMeta()[event.NN.String()] {
+			invalidEvent = true
+		}
+	}
+	if !invalidEvent {
+		return nil
+	}
+
+	// generate query map for producer
+	qm := make(map[string][]metric.Handler)
+	var hs []metric.Handler
+	for pName, pHandler := range r.env.Config.Metric.Prometheus.Handlers {
+		hs = append(hs, generateHandler(event.NN.Name, event.NN.Namespace, pName, pHandler))
+	}
+	qm[event.NN.String()] = hs
+	return qm
+}
+
+// call back function for ticker producer
+func (r *ServicefenceReconciler) handleTickerEvent(event trigger.TickerEvent) metric.QueryMap {
+
+	// no need to check time duration
+
+	// generate query map for producer
+	qm := make(map[string][]metric.Handler)
+	for meta := range r.getInterestMeta() {
+		namespace, name := strings.Split(meta, "/")[0], strings.Split(meta, "/")[1]
+		var hs []metric.Handler
+		for pName, pHandler := range r.env.Config.Metric.Prometheus.Handlers {
+			hs = append(hs, generateHandler(name, namespace, pName, pHandler))
+		}
+		qm[meta] = hs
+	}
+
+	return qm
+}
+
+func generateHandler(name, namespace, pName string, pHandler *v1alpha1.Prometheus_Source_Handler) metric.Handler {
+	query := strings.ReplaceAll(pHandler.Query, "$namespace", namespace)
+	query = strings.ReplaceAll(query, "$source_app", name)
+	return metric.Handler{Name: pName, Query: query}
+}
+
+func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error) {
+
+	prometheusSourceConfig, err := newPrometheusSourceConfig(env)
+	if err != nil {
+		return nil, err
+	}
+
+	return &metric.ProducerConfig{
+		EnableWatcherProducer: true,
+		WatcherProducerConfig: metric.WatcherProducerConfig{
+			Name:       "lazyload-watcher",
+			MetricChan: make(chan metric.Metric),
+			WatcherTriggerConfig: trigger.WatcherTriggerConfig{
+				Kinds: []schema.GroupVersionKind{
+					{
+						Group:   "networking.istio.io",
+						Version: "v1beta1",
+						Kind:    "Sidecar",
+					},
+				},
+				EventChan:     make(chan trigger.WatcherEvent),
+				DynamicClient: env.DynamicClient,
+			},
+			PrometheusSourceConfig: prometheusSourceConfig,
+		},
+		EnableTickerProducer: true,
+		TickerProducerConfig: metric.TickerProducerConfig{
+			Name:       "lazyload-ticker",
+			MetricChan: make(chan metric.Metric),
+			TickerTriggerConfig: trigger.TickerTriggerConfig{
+				Durations: []time.Duration{
+					30 * time.Second,
+				},
+				EventChan: make(chan trigger.TickerEvent),
+			},
+			PrometheusSourceConfig: prometheusSourceConfig,
+		},
+		StopChan: env.Stop,
+	}, nil
+
+}
+
+func newPrometheusSourceConfig(env bootstrap.Environment) (metric.PrometheusSourceConfig, error) {
+	ps := env.Config.Metric.Prometheus
+	if ps == nil {
+		return metric.PrometheusSourceConfig{}, stderrors.New("failure create prometheus client, empty prometheus config")
+	}
+	promClient, err := prometheusApi.NewClient(prometheusApi.Config{
+		Address:      ps.Address,
+		RoundTripper: nil,
+	})
+	if err != nil {
+		return metric.PrometheusSourceConfig{}, err
+	}
+
+	return metric.PrometheusSourceConfig{
+		Api: prometheusV1.NewAPI(promClient),
+	}, nil
+}
+
 func (r *ServicefenceReconciler) refreshSidecar(instance *lazyloadv1alpha1.ServiceFence) error {
+	log := log.WithField("reporter", "ServicefenceReconciler").WithField("function", "refreshSidecar")
 	sidecar, err := newSidecar(instance, r.env)
 	if err != nil {
 		log.Errorf("servicefence generate sidecar failed, %+v", err)
@@ -184,7 +324,7 @@ func (r *ServicefenceReconciler) refreshSidecar(instance *lazyloadv1alpha1.Servi
 			nsName, rev, sfRev)
 	} else {
 		if !reflect.DeepEqual(found.Spec, sidecar.Spec) {
-			log.Infof("Update a Sidecarin %s:%s", sidecar.Namespace, sidecar.Name)
+			log.Infof("Update a Sidecar in %s:%s", sidecar.Namespace, sidecar.Name)
 			sidecar.ResourceVersion = found.ResourceVersion
 			err = r.Client.Update(context.TODO(), sidecar)
 			if err != nil {
@@ -373,7 +513,7 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 	return delta
 }
 
-func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env *bootstrap.Environment) (*v1alpha3.Sidecar, error) {
+func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env bootstrap.Environment) (*v1alpha3.Sidecar, error) {
 	host := make([]string, 0)
 	if !vhost.Spec.Enable {
 		return nil, nil
