@@ -8,6 +8,7 @@ require (
 	github.com/golang/protobuf v1.4.2
 	github.com/onsi/ginkgo v1.11.0
 	github.com/onsi/gomega v1.8.1
+	github.com/prometheus/client_golang v1.0.0
 	github.com/sirupsen/logrus v1.4.2
 	istio.io/api v0.0.0-20210322145030-ec7ef4cd6eaf
 	k8s.io/api v0.20.2
@@ -21,6 +22,6 @@ replace (
 	k8s.io/api => k8s.io/api v0.17.2
 	k8s.io/apimachinery => k8s.io/apimachinery v0.17.2
 
-	slime.io/slime/framework => github.com/slime-io/slime/framework v0.3.1
-	//slime.io/slime/framework => ../slime/framework
+	//slime.io/slime/framework => github.com/slime-io/slime/framework v0.3.1
+	slime.io/slime/framework => ../slime/framework
 )

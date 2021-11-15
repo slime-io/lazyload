@@ -2,20 +2,17 @@ package controllers
 
 import (
 	"context"
-	"fmt"
-
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"slime.io/slime/framework/model"
-
-	"k8s.io/apimachinery/pkg/api/errors"
-
-	event_source "slime.io/slime/framework/model/source"
+	"slime.io/slime/framework/model/metric"
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
+	"strings"
 )
 
 const (
@@ -27,25 +24,48 @@ const (
 	CreatedByFenceController = "fence-controller"
 )
 
-func (r *ServicefenceReconciler) WatchSource(stop <-chan struct{}) {
-	go func() {
-		for {
-			select {
-			case <-stop:
+func (r *ServicefenceReconciler) WatchMetric() {
+	log := log.WithField("reporter", "ServicefenceReconciler").WithField("function", "WatchMetric")
+	log.Infof("start watching metric")
+
+	for {
+		select {
+		case metric, ok := <-r.watcherMetricChan:
+			if !ok {
+				log.Warningf("watcher mertic channel closed, break process loop")
 				return
-			case e := <-r.eventChan:
-				switch e.EventType {
-				case event_source.Update, event_source.Add:
-					if _, err := r.Refresh(reconcile.Request{NamespacedName: e.Loc}, e.Info); err != nil {
-						fmt.Printf("error:%v", err)
-					}
-				}
 			}
+			r.ConsumeMetric(metric)
+		case metric, ok := <-r.tickerMetricChan:
+			if !ok {
+				log.Warningf("ticker metric channel closed, break process loop")
+				return
+			}
+			r.ConsumeMetric(metric)
 		}
-	}()
+	}
+
 }
 
-func (r *ServicefenceReconciler) Refresh(req reconcile.Request, args map[string]string) (reconcile.Result, error) {
+func (r *ServicefenceReconciler) ConsumeMetric(metric metric.Metric) {
+	for meta, results := range metric {
+		log.Debugf("got metric for %s", meta)
+		namespace, name := strings.Split(meta, "/")[0], strings.Split(meta, "/")[1]
+		nn := types.NamespacedName{Namespace: namespace, Name: name}
+		if len(results) != 1 {
+			log.Errorf("wrong metric results length for %s", meta)
+			continue
+		}
+		value := results[0].Value
+		if _, err := r.Refresh(reconcile.Request{NamespacedName: nn}, value); err != nil {
+			log.Errorf("refresh error:%v", err)
+		}
+	}
+}
+
+func (r *ServicefenceReconciler) Refresh(req reconcile.Request, value map[string]string) (reconcile.Result, error) {
+	log := log.WithField("reporter", "ServicefenceReconciler").WithField("function", "Refresh")
+
 	sf := &lazyloadv1alpha1.ServiceFence{}
 	err := r.Client.Get(context.TODO(), req.NamespacedName, sf)
 
@@ -75,7 +95,7 @@ func (r *ServicefenceReconciler) Refresh(req reconcile.Request, args map[string]
 		}
 	}
 
-	sf.Status.MetricStatus = args
+	sf.Status.MetricStatus = value
 	err = r.Client.Status().Update(context.TODO(), sf)
 	if err != nil {
 		log.Errorf("can not update ServiceFence %s, %+v", req.NamespacedName.Name, err)
