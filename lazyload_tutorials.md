@@ -381,7 +381,7 @@ metadata:
 
 ### Custom undefined traffic dispatch
 
-By default, lazyload/fence sends  (default or undefined) traffic that envoy cannot match the route to the global sidecar to deal with the problem of missing service data temprorarily, which is inevitably faced by "lazy loading". This solution is limited by technical details, and cannot handle traffic whose target (e.g. domain name) is outside the cluster, see [[Configuration Lazy Loading]: Failed to access external service #3](https://github.com/slime-io/) slime/issues/3).
+By default, lazyload/fence sends  (default or undefined) traffic that envoy cannot match the route to the global sidecar to deal with the problem of missing service data temprorarily, which is inevitably faced by "lazy loading". This solution is limited by technical details, and cannot handle traffic whose target (e.g. domain name) is outside the cluster, see [[Configuration Lazy Loading]: Failed to access external service #3](https://github.com/slime-io/slime/issues/3).
 
 Based on this background, this feature was designed to be used in more flexible business scenarios as well. The general idea is to assign different default traffic to different targets for correct processing by means of domain matching.
 
@@ -440,7 +440,7 @@ foo: bar
 $latest_tag equals the latest tag. The shell scripts and yaml files uses this version as default.
 
 ```sh
-$ export latest_tag=$(curl -s https://api.github.com/repos/slime-io/slime/tags | grep 'name' | cut -d\" -f4 | head -1)
+$ export latest_tag=$(curl -s https://api.github.com/repos/slime-io/lazyload/tags | grep 'name' | cut -d\" -f4 | head -1)
 ```
 
 
@@ -448,7 +448,7 @@ $ export latest_tag=$(curl -s https://api.github.com/repos/slime-io/slime/tags |
 ### Install Slime
 
 ```sh
-$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/samples/lazyload/easy_install_lazyload.sh)"
+$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/lazyload/easy_install_lazyload.sh)"
 ```
 
 Confirm all components are running.
@@ -475,7 +475,7 @@ Change the namespace of current-context to which bookinfo will deploy first. Her
 
 ```sh
 $ kubectl label namespace default istio-injection=enabled
-$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/config/bookinfo.yaml"
+$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/config/bookinfo.yaml"
 ```
 
 Confirm all pods are running.
@@ -503,7 +503,7 @@ You can also create gateway and visit productpage from outside, like what shows 
 Create lazyload for productpage.
 
 ```sh
-$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/samples/lazyload/servicefence_productpage.yaml"
+$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/lazyload/servicefence_productpage.yaml"
 ```
 
 Confirm servicefence and sidecar already exist.
@@ -611,13 +611,13 @@ The backends are details and reviews now.
 Uninstall bookinfo.
 
 ```sh
-$ kubectl delete -f "https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/config/bookinfo.yaml"
+$ kubectl delete -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/config/bookinfo.yaml"
 ```
 
 Uninstall slime.
 
 ```sh
-$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/samples/lazyload/easy_uninstall_lazyload.sh)"
+$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/lazyload/easy_uninstall_lazyload.sh)"
 ```
 
 
@@ -633,15 +633,15 @@ $ export custom_tag_or_commit=xxx
 If command includes a yaml file,  please use $custom_tag_or_commit instead of $latest_tag.
 
 ```sh
-#$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/config/bookinfo.yaml"
-$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/slime/$custom_tag_or_commit/install/config/bookinfo.yaml"
+#$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/config/bookinfo.yaml"
+$ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$custom_tag_or_commit/install/config/bookinfo.yaml"
 ```
 
 If command includes a shell script,  please add $custom_tag_or_commit as a parameter to the shell script.
 
 ```sh
-#$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/samples/smartlimiter/easy_install_limiter.sh)"
-$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/slime/$latest_tag/install/samples/smartlimiter/easy_install_limiter.sh)" $custom_tag_or_commit
+#$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/smartlimiter/easy_install_limiter.sh)"
+$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/smartlimiter/easy_install_limiter.sh)" $custom_tag_or_commit
 ```
 
 
