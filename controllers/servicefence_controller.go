@@ -19,13 +19,9 @@ package controllers
 import (
 	"context"
 	"fmt"
-	prometheusApi "github.com/prometheus/client_golang/api"
-	prometheusV1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"reflect"
 	"slime.io/slime/framework/apis/config/v1alpha1"
 	"slime.io/slime/framework/model/metric"
-	"slime.io/slime/framework/model/trigger"
 	"sort"
 	"strings"
 	"sync"
@@ -50,7 +46,6 @@ import (
 	"slime.io/slime/framework/controllers"
 	"slime.io/slime/framework/util"
 
-	stderrors "errors"
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 	modmodel "slime.io/slime/modules/lazyload/model"
 )
@@ -168,118 +163,6 @@ func (r *ServicefenceReconciler) getInterestMeta() map[string]bool {
 	r.reconcileLock.RLock()
 	defer r.reconcileLock.RUnlock()
 	return r.interestMetaCopy
-}
-
-// call back function for watcher producer
-func (r *ServicefenceReconciler) handleWatcherEvent(event trigger.WatcherEvent) metric.QueryMap {
-
-	// check event
-	gvks := []schema.GroupVersionKind{
-		{Group: "networking.istio.io", Version: "v1beta1", Kind: "Sidecar"},
-	}
-	invalidEvent := false
-	for _, gvk := range gvks {
-		if event.GVK == gvk && r.getInterestMeta()[event.NN.String()] {
-			invalidEvent = true
-		}
-	}
-	if !invalidEvent {
-		return nil
-	}
-
-	// generate query map for producer
-	qm := make(map[string][]metric.Handler)
-	var hs []metric.Handler
-	for pName, pHandler := range r.env.Config.Metric.Prometheus.Handlers {
-		hs = append(hs, generateHandler(event.NN.Name, event.NN.Namespace, pName, pHandler))
-	}
-	qm[event.NN.String()] = hs
-	return qm
-}
-
-// call back function for ticker producer
-func (r *ServicefenceReconciler) handleTickerEvent(event trigger.TickerEvent) metric.QueryMap {
-
-	// no need to check time duration
-
-	// generate query map for producer
-	qm := make(map[string][]metric.Handler)
-	for meta := range r.getInterestMeta() {
-		namespace, name := strings.Split(meta, "/")[0], strings.Split(meta, "/")[1]
-		var hs []metric.Handler
-		for pName, pHandler := range r.env.Config.Metric.Prometheus.Handlers {
-			hs = append(hs, generateHandler(name, namespace, pName, pHandler))
-		}
-		qm[meta] = hs
-	}
-
-	return qm
-}
-
-func generateHandler(name, namespace, pName string, pHandler *v1alpha1.Prometheus_Source_Handler) metric.Handler {
-	query := strings.ReplaceAll(pHandler.Query, "$namespace", namespace)
-	query = strings.ReplaceAll(query, "$source_app", name)
-	return metric.Handler{Name: pName, Query: query}
-}
-
-func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error) {
-
-	prometheusSourceConfig, err := newPrometheusSourceConfig(env)
-	if err != nil {
-		return nil, err
-	}
-
-	return &metric.ProducerConfig{
-		EnableWatcherProducer: true,
-		WatcherProducerConfig: metric.WatcherProducerConfig{
-			Name:       "lazyload-watcher",
-			MetricChan: make(chan metric.Metric),
-			WatcherTriggerConfig: trigger.WatcherTriggerConfig{
-				Kinds: []schema.GroupVersionKind{
-					{
-						Group:   "networking.istio.io",
-						Version: "v1beta1",
-						Kind:    "Sidecar",
-					},
-				},
-				EventChan:     make(chan trigger.WatcherEvent),
-				DynamicClient: env.DynamicClient,
-			},
-			PrometheusSourceConfig: prometheusSourceConfig,
-		},
-		EnableTickerProducer: true,
-		TickerProducerConfig: metric.TickerProducerConfig{
-			Name:       "lazyload-ticker",
-			MetricChan: make(chan metric.Metric),
-			TickerTriggerConfig: trigger.TickerTriggerConfig{
-				Durations: []time.Duration{
-					30 * time.Second,
-				},
-				EventChan: make(chan trigger.TickerEvent),
-			},
-			PrometheusSourceConfig: prometheusSourceConfig,
-		},
-		StopChan: env.Stop,
-	}, nil
-
-}
-
-func newPrometheusSourceConfig(env bootstrap.Environment) (metric.PrometheusSourceConfig, error) {
-	ps := env.Config.Metric.Prometheus
-	if ps == nil {
-		return metric.PrometheusSourceConfig{}, stderrors.New("failure create prometheus client, empty prometheus config")
-	}
-	promClient, err := prometheusApi.NewClient(prometheusApi.Config{
-		Address:      ps.Address,
-		RoundTripper: nil,
-	})
-	if err != nil {
-		return metric.PrometheusSourceConfig{}, err
-	}
-
-	return metric.PrometheusSourceConfig{
-		Api: prometheusV1.NewAPI(promClient),
-	}, nil
 }
 
 func (r *ServicefenceReconciler) refreshSidecar(instance *lazyloadv1alpha1.ServiceFence) error {
