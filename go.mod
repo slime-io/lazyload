@@ -3,6 +3,7 @@ module slime.io/slime/modules/lazyload
 go 1.13
 
 require (
+	github.com/envoyproxy/go-control-plane v0.9.9-0.20201210154907-fd9021fe5dad
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/golang/protobuf v1.4.2
@@ -22,6 +23,6 @@ replace (
 	k8s.io/api => k8s.io/api v0.17.2
 	k8s.io/apimachinery => k8s.io/apimachinery v0.17.2
 
-	slime.io/slime/framework => github.com/slime-io/slime/framework v0.3.3
-	//slime.io/slime/framework => ../slime/framework
+	slime.io/slime/framework => github.com/slime-io/slime/framework v0.3.6
+//slime.io/slime/framework => ../slime/framework
 )
