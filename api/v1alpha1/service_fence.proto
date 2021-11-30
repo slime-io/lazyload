@@ -119,6 +119,17 @@ message Destinations {
     enum Status {
         ACTIVE = 0;
         EXPIRE = 1;
+        // In order to avoid deleting frequently, add status EXPIREWAIT between ACTIVE and EXPIRE.
+        // When new metric does not contain host of ACTIVE status, its status will change to EXPIREWAIT. If new metric does not contain
+        // host of EXPIREWAIT status, which means this host is not contained in the last two metrics, the status will change to EXPIRE.
+        // Otherwise, EXPIREWAIT status will change back to ACTIVE.
+        // Hosts of ACTIVE or EXPIREWAIT status are all valid for sidecar.
+        // For prometheus metric source, as metric can continuously be watched, we can set status update interval in the future version,
+        // refer to RecentlyCalled of RecyclingStrategy. But for accesslog metric source, metric only stores in lazyload controller memory.
+        // Metric can not continuously produce after host added to sidecar. So after lazyload controller rebooting, we can not tell whether
+        // old host is valid or not until it is removed from sidecar and goes to global-sidecar again.
+        // We do not have a proper solution to do same thing for accesslog metric source so far. Need further thinking.
+        EXPIREWAIT = 2;
     }
     Status status = 3;
 }
