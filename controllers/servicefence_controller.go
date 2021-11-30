@@ -380,9 +380,18 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 		Deleted: make([]string, 0),
 		Added:   make([]string, 0),
 	}
-	for k := range host.Status.Domains {
+	for k, dest := range host.Status.Domains {
 		if _, ok := domains[k]; !ok {
-			delta.Deleted = append(delta.Deleted, k)
+			if dest.Status == lazyloadv1alpha1.Destinations_ACTIVE {
+				// active -> pending
+				domains[k] = &lazyloadv1alpha1.Destinations{
+					Hosts:  dest.Hosts,
+					Status: lazyloadv1alpha1.Destinations_EXPIREWAIT,
+				}
+			} else {
+				// pending -> delete
+				delta.Deleted = append(delta.Deleted, k)
+			}
 		}
 	}
 	for k := range domains {
@@ -403,7 +412,7 @@ func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env bootstrap.Environment)
 		return nil, nil
 	}
 	for _, v := range vhost.Status.Domains {
-		if v.Status == lazyloadv1alpha1.Destinations_ACTIVE {
+		if v.Status == lazyloadv1alpha1.Destinations_ACTIVE || v.Status == lazyloadv1alpha1.Destinations_EXPIREWAIT {
 			for _, h := range v.Hosts {
 				host = append(host, "*/"+h)
 			}
