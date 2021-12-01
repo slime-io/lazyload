@@ -8,14 +8,11 @@
   - [Example](#example)
   - [E2E Test Introduction](#e2e-test-introduction)
   - [ServiceFence Instruction](#servicefence-instruction)
+  - [FAQ](#faq)
 
 # Lazyload Overview
 
-
-
 [中文](./README_zh.md)
-
-
 
 ## Features
 
@@ -24,6 +21,7 @@
 3. Suitable for scenarios where out-of-cluster services exist
 4. Support manual, automatic and other enable lazyload methods
 5. Supports multiple enable scopes like service level, namespace level, etc.
+6. Support Prometheus and Accesslog  metrics acquisition methods
 
 
 
@@ -73,9 +71,10 @@ Details at [Install&Use](./lazyload_tutorials.md#install-and-use)
 
 ## Introduction of other features
 
+- Enable lazyload based on accesslog
 - Automatic ServiceFence generation based on namespace/service label
-
 - Custom undefined traffic dispatch
+- Log output to local file and rotate
 
 Details at [Introduction of other features](./lazyload_tutorials.md#Introduction-of-other-features)
 
@@ -102,3 +101,9 @@ ServiceFence can be seen as a Sidecar resource for a service. The difference is 
 For example, c.default.svc.cluster.local is in servicefence. Now a route has a host of c.default.svc.cluster.local, the destination chagnes to d.default.svc.cluster.local. Then service d will be included in servicefence.
 
 <img src="./media/ll.png" alt="服务围栏" style="zoom: 67%;" />
+
+
+
+## FAQ
+
+详见 [FAQ](./lazyload_tutorials.md#FAQ)

@@ -5,8 +5,12 @@
     - [使用集群唯一的global-sidecar](#使用集群唯一的global-sidecar)
     - [不使用global-sidecar组件](#不使用global-sidecar组件)
   - [其他特性介绍](#其他特性介绍)
+    - [基于Accesslog开启懒加载](#基于accesslog开启懒加载)
     - [基于namespace/service label自动生成ServiceFence](#基于namespaceservice-label自动生成servicefence)
     - [自定义兜底流量分派](#自定义兜底流量分派)
+    - [日志输出到本地并轮转](#日志输出到本地并轮转)
+      - [创建存储卷](#创建存储卷)
+      - [在SlimeBoot中声明挂载信息](#在slimeboot中声明挂载信息)
   - [示例](#示例)
     - [安装 istio (1.8+)](#安装-istio-18)
     - [设定tag](#设定tag)
@@ -17,6 +21,9 @@
     - [再次访问观察](#再次访问观察)
     - [卸载](#卸载)
     - [补充说明](#补充说明)
+  - [FAQ](#faq)
+    - [global-sidecar-pilot的意义？](#global-sidecar-pilot的意义)
+    - [global sidecar不能正常启动？](#global-sidecar不能正常启动)
 
 
 # 懒加载教程
@@ -35,7 +42,7 @@
 
 1. global-sidecar-pilot从集群原有pilot处获取全量配置信息
 
-2. global-sidecar-pilot推动全量配置给global-sidecar
+2. global-sidecar-pilot针对global-sidecar的特殊需求，将通用配置调整成global-sidecar定制版后，推送配置给global-sidecar
 
 3. 为应用A启用懒加载
 
@@ -303,6 +310,37 @@ spec:
 
 ## 其他特性介绍
 
+### 基于Accesslog开启懒加载
+
+指定SlimeBoot CR资源中`spec.module.global.misc.metric_source_type`等于`accesslog`会使用Accesslog获取服务调用关系，等于`prometheus`则使用Prometheus。
+
+使用Accesslog获取服务调用关系的大概过程：
+
+- slime-boot在创建global-sidecar时，发现`metric_source_type: accesslog`，额外生成一个configmap，内容是包含lazyload controller处理accesslog的地址信息的static_resources。再通过一个envoyfilter，将static_resources加入global-sidecar配置中，使得global-sidecar的accesslog会发送到lazyload controller
+- global-sidecar完成兜底转发时会生成accesslog，包含了调用方和被调用方服务信息。global-sidecar将信息发送给lazyload controller
+- lazyload controller分析accesslog，获取到新的服务调用关系
+
+随后的过程，就是修改servicefence和sidecar，和处理prometheus metric的过程一致。
+
+样例
+
+```yaml
+spec:
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application svc ports
+          - "9080"
+      global:
+        misc:
+          metric_source_type: accesslog
+```
+
+[完整样例](./install/samples/lazyload/slimeboot_lazyload_accesslog.yaml)
+
+
+
 ### 基于namespace/service label自动生成ServiceFence
 
 
@@ -348,13 +386,10 @@ fence支持基于label的自动生成，也即可以通过打label `slime.io/ser
 apiVersion: v1
 kind: Namespace
 metadata:
-  creationTimestamp: "2021-03-16T09:36:25Z"
   labels:
     istio-injection: enabled
     slime.io/serviceFenced: "true"
   name: testns
-  resourceVersion: "79604437"
-  uid: 5a34b780-cd95-4e43-b706-94d89473db77
 ---
 apiVersion: v1
 kind: Service
@@ -366,8 +401,6 @@ metadata:
     slime.io/serviceFenced: "false"
   name: svc2
   namespace: testns
-  resourceVersion: "79604741"
-  uid: b36f04fe-18c6-4506-9d17-f91a81479dd2
 ```
 
 
@@ -421,6 +454,120 @@ foo: bar
 **注意**：
 
 * 自定义分派场景，如果希望保持原有逻辑 “其他所有未定义流量走global sidecar” 的话，需要显式配置如上的最后一条
+
+
+
+### 日志输出到本地并轮转
+
+slime的日志默认输出到标准输出，指定SlimeBoot CR资源中`spec.module.global.log.logRotate`等于`true`会将日志输出到本地并启动日志轮转，不再输出到标准输出。
+
+轮转配置也是可调整的，默认的配置如下，可以通过显示指定logRotateConfig中的各个值进行覆盖。
+
+```yaml
+spec:
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application svc ports
+          - "9080"
+      global:
+        log:
+          logRotate: true
+          logRotateConfig:
+            filePath: "/tmp/log/slime.log"
+            maxSizeMB: 100
+            maxBackups: 10
+            maxAgeDay: 10
+            compress: true
+```
+
+通常需要配合存储卷使用，在存储卷准备完毕后，指定SlimeBoot CR资源中的`spec.volumes`和`spec.containers.slime.volumeMounts`来显示将存储卷挂载到日志本地文件所在的路径。
+
+以下是基于minikube kubernetes场景下的完整demo
+
+#### 创建存储卷
+
+基于/mnt/data路径创建hostpath类型的存储卷
+
+```yaml
+# hostPath pv for minikube demo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lazyload-claim
+  namespace: mesh-operator
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: lazyload-volumn
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+```
+
+#### 在SlimeBoot中声明挂载信息
+
+在SlimeBoot CR资源中指定了存储卷会挂载到pod的"/tmp/log"路径，这样slime的日志会持久化到/mnt/data路径下，并且会自动轮转。
+
+```yaml
+---
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  image:
+    pullPolicy: Always
+    repository: docker.io/slimeio/slime-lazyload
+    tag: master-e5f2d83-dirty_1b68486
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application svc ports
+          - "9080"
+      global:
+        log:
+          logRotate: true
+          logRotateConfig:
+            filePath: "/tmp/log/slime.log"
+            maxSizeMB: 100
+            maxBackups: 10
+            maxAgeDay: 10
+            compress: true
+#...
+  volumes:
+    - name: lazyload-storage
+      persistentVolumeClaim:
+        claimName: lazyload-claim
+  containers:
+    slime:
+      volumeMounts:
+        - mountPath: "/tmp/log"
+          name: lazyload-storage
+```
+
+[完整样例](./install/samples/lazyload/slimeboot_lazyload_logrotate.yaml)
+
+
 
 
 
@@ -640,3 +787,22 @@ $ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$custom_
 $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/smartlimiter/easy_install_limiter.sh)" $custom_tag_or_commit
 ```
 
+
+
+
+
+## FAQ
+
+### global-sidecar-pilot的意义？
+
+由于global-sidecar的作用不同于普通sidecar，需要一些定制逻辑，比如兜底envoyfilter不对global-sidecar生效否则会死循环等，global-sidecar并不能直接使用集群原有pilot的全量配置。global-sidecar-pilot会从集群原有pilot处获取全量配置后，会进行微调，再推送给global-sidecar。现有global-sidecar-pilot是基于istiod 1.7改造的。
+
+注：为了降低学习成本、增强兼容性，我们正在考虑去除global-sidecar-pilot，届时不再有定制化的pilot，完全兼容社区版本，预计在下一个大版本中实现此功能。
+
+
+
+### global sidecar不能正常启动？
+
+global sidecar启动报错`Internal:Error adding/updating listener(s) 0.0.0.0_15021: cannot bind '0.0.0.0:15021': Address already in use`，这错误通常是端口冲突导致。global-sidecar是以gateway模式运行的sidecar，它会绑定到真实端口上。具体来说是istio-ingressgateway使用了15021端口，这会导致global-sidecar的lds更新失败，修改ingressgateway的15021端口为其他值可解决。
+
+注：目前是通过端口规划来解决此问题，下个大版本中会摆脱这个局限。

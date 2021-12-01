@@ -8,11 +8,12 @@
   - [完整使用样例](#完整使用样例)
   - [E2E测试介绍](#e2e测试介绍)
   - [ServiceFence说明](#servicefence说明)
+  - [常见问题](#常见问题)
 
 
 # 懒加载概述
 
-
+[English](./README.md)
 
 ## 特点
 
@@ -21,6 +22,7 @@
 3. 适用存在集群外服务的场景
 4. 支持手动、自动等多种启用方式
 5. 支持服务级、命名空间级等多种启用范围
+6. 支持Prometheus和Accesslog等多种指标获取方式
 
 
 
@@ -72,9 +74,10 @@ lazyload目前有三种使用模式：
 
 ## 其他特性介绍
 
+- 基于Accesslog开启懒加载
 - ServiceFence支持手动创建和基于namespace/service label自动创建
-
 - 支持自定义兜底流量分派
+- 日志输出到本地并轮转
 
 详见 [其他特性介绍](./lazyload_tutorials_zh.md#%E5%85%B6%E4%BB%96%E7%89%B9%E6%80%A7%E4%BB%8B%E7%BB%8D)
 
@@ -101,3 +104,10 @@ ServiceFence可以看作是针对某一服务的Sidecar资源，区别是Service
 例如，c.default.svc.cluster.local在fence中。此时有一条路由规则的host为c.default.svc.cluster.local，其destinatoin为d.default.svc.cluster.local，那么d服务也会被自动扩充到Fence中。
 
 <img src="./media/ll.png" alt="服务围栏" style="zoom: 67%;" />
+
+
+
+## 常见问题
+
+详见 [FAQ](./lazyload_tutorials_zh.md#FAQ)
+
