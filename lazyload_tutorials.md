@@ -5,8 +5,12 @@
     - [Use cluster unique global-sidecar](#use-cluster-unique-global-sidecar)
     - [Disable global-sidecar](#disable-global-sidecar)
   - [Introduction of other features](#introduction-of-other-features)
+    - [Enable lazyload based on accesslog](#enable-lazyload-based-on-accesslog)
     - [Automatic ServiceFence generation based on namespace/service label](#automatic-servicefence-generation-based-on-namespaceservice-label)
     - [Custom undefined traffic dispatch](#custom-undefined-traffic-dispatch)
+    - [Logs output to local file and rotate](#logs-output-to-local-file-and-rotate)
+      - [Creating Storage Volumes](#creating-storage-volumes)
+      - [Declaring mount information in SlimeBoot](#declaring-mount-information-in-slimeboot)
   - [Example](#example)
     - [Install Istio (1.8+)](#install-istio-18)
     - [Set Tag](#set-tag)
@@ -17,6 +21,9 @@
     - [Second Visit and Observ](#second-visit-and-observ)
     - [Uninstall](#uninstall)
     - [Remarks](#remarks)
+  - [FAQ](#faq)
+    - [Meaning of global-sidecar-pilot?](#meaning-of-global-sidecar-pilot)
+    - [global sidecar does not start properly?](#global-sidecar-does-not-start-properly)
 
 
 # Lazyload Turotails
@@ -308,9 +315,38 @@ spec:
 
 ## Introduction of other features
 
+### Enable lazyload based on accesslog
+
+Specifying the SlimeBoot CR resource `spec.module.global.misc.metric_source_type` equal to `accesslog` will use Accesslog to get the service  relationship, and equal to `prometheus` will use Prometheus.
+
+Approximate process of obtaining service call relationships using Accesslog:
+
+- When slime-boot creates global-sidecar, it finds `metric_source_type: accesslog` and generates an additional configmap with static_resources containing the address information for the lazyload controller to process accesslog. The static_resources is then added to the global-sidecar configuration by an envoyfilter, so that the global-sidecar accesslog will be sent to the lazyload controller
+- The global-sidecar generates an accesslog, containing information about the caller and callee services. Global-sidecar sends the information to the lazyload controller
+- The lazyload controller analyzes the accesslog and gets the new service call relationship
+
+The subsequent process, which involves modifying servicefence and sidecar, is the same as the process for handling the prometheus metric.
+
+Example
+
+```yaml
+spec:
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application svc ports
+          - "9080"
+      global:
+        misc:
+          metric_source_type: accesslog
+```
+
+[Full sample](./install/samples/lazyload/slimeboot_lazyload_accesslog.yaml)
+
+
+
 ### Automatic ServiceFence generation based on namespace/service label
-
-
 
 fence supports automatic generation based on label, i.e. you can define  **the scope of "fence enabled" functionality** by typing label `slime.io/serviceFenced`.
 
@@ -426,6 +462,118 @@ foo: bar
 **Note**:
 
 * In custom assignment scenarios, if you want to keep the original logic "all other undefined traffic goes to global sidecar", you need to explicitly configure the last item as above
+
+
+
+### Logs output to local file and rotate
+
+slime logs are output to stdout by default, specifying `spec.module.global.log.logRotate` equal to `true` in the SlimeBoot CR resource will output the logs locally and start the log rotation, no longer to standard output.
+
+The rotation configuration is also adjustable, and the default configuration is as follows, which can be overridden by displaying the individual values in the specified logRotateConfig.
+
+```yaml
+spec:
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application svc ports
+          - "9080"
+      global:
+        log:
+          logRotate: true
+          logRotateConfig:
+            filePath: "/tmp/log/slime.log"
+            maxSizeMB: 100
+            maxBackups: 10
+            maxAgeDay: 10
+            compress: true
+```
+
+It is usually required to be used with storage volumes. After the storage volume is prepared, specify `spec.volumes` and `spec.containers.slime.volumeMounts` in the SlimeBoot CR resource to show the path where the storage volume will be mounted to the log local file.
+
+Here is the full demo based on the minikube kubernetes scenario.
+
+#### Creating Storage Volumes
+
+Create a hostpath type storage volume based on the /mnt/data
+
+```yaml
+# hostPath pv for minikube demo
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lazyload-claim
+  namespace: mesh-operator
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: lazyload-volumn
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data"
+```
+
+#### Declaring mount information in SlimeBoot
+
+Specify in the SlimeBoot CR resource that the storage volume will be mounted to the "/tmp/log" path of the pod, so that the slime logs will be persisted to the /mnt/data path and will be automatically rotated.
+
+```yaml
+---
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  image:
+    pullPolicy: Always
+    repository: docker.io/slimeio/slime-lazyload
+    tag: master-e5f2d83-dirty_1b68486
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application svc ports
+          - "9080"
+      global:
+        log:
+          logRotate: true
+          logRotateConfig:
+            filePath: "/tmp/log/slime.log"
+            maxSizeMB: 100
+            maxBackups: 10
+            maxAgeDay: 10
+            compress: true
+#...
+  volumes:
+    - name: lazyload-storage
+      persistentVolumeClaim:
+        claimName: lazyload-claim
+  containers:
+    slime:
+      volumeMounts:
+        - mountPath: "/tmp/log"
+          name: lazyload-storage
+```
+
+[Full Example](./install/samples/lazyload/slimeboot_lazyload_logrotate.yaml)
 
 
 
@@ -647,4 +795,22 @@ $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload
 
 
 
+
+## FAQ
+
+### Meaning of global-sidecar-pilot?
+
+Because the role of global-sidecar is different from normal sidecar, it needs some custom logic, such as the bottom envoyfilter does not take effect for global-sidecar or it will dead-loop, etc. global-sidecar does not directly use the full configuration of the original pilot of the cluster. The global-sidecar-pilot will get the full configuration from the original pilot of the cluster, then fine-tune it and push it to the global-sidecar. the existing global-sidecar-pilot is based on istiod 1.7.
+
+Note: In order to reduce learning costs and enhance compatibility, we are considering removing the global-sidecar-pilot, when there will no longer be a customized pilot, fully compatible with the community version, and expect to implement this feature in the next major release.
+
+
+
+### global sidecar does not start properly?
+
+Global sidecar starts with an error `Internal:Error adding/updating listener(s) 0.0.0.0_15021: cannot bind '0.0.0.0:15021': Address already in use`. 
+
+This error is usually caused by port conflict. The global-sidecar is a sidecar running in gateway mode, which binds to the real port. Specifically, istio-ingressgateway is using port 15021, which will cause the lds update of global-sidecar to fail, and can be solved by changing port 15021 of ingressgateway to another value.
+
+Note: This problem is currently solved by port planning, and will be freed from this limitation in the next major release.
 
