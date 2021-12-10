@@ -66,6 +66,9 @@ func (r *ServicefenceReconciler) ConsumeMetric(metric metric.Metric) {
 func (r *ServicefenceReconciler) Refresh(req reconcile.Request, value map[string]string) (reconcile.Result, error) {
 	log := log.WithField("reporter", "ServicefenceReconciler").WithField("function", "Refresh")
 
+	r.reconcileLock.Lock()
+	defer r.reconcileLock.Unlock()
+
 	sf := &lazyloadv1alpha1.ServiceFence{}
 	err := r.Client.Get(context.TODO(), req.NamespacedName, sf)
 
@@ -88,19 +91,18 @@ func (r *ServicefenceReconciler) Refresh(req reconcile.Request, value map[string
 		return reconcile.Result{}, nil
 	}
 
+	// use updateVisitedHostStatus to update svf.spec and svf.status
+	sf.Status.MetricStatus = value
+	diff := r.updateVisitedHostStatus(sf)
+	r.recordVisitor(sf, diff)
+
 	if sf.Spec.Enable {
 		if err := r.refreshSidecar(sf); err != nil {
 			// XXX return err?
-			log.Errorf("refresh sf %v met err %v", req.NamespacedName, err)
+			log.Errorf("refresh sidecar %v met err: %v", req.NamespacedName, err)
 		}
 	}
 
-	sf.Status.MetricStatus = value
-	err = r.Client.Status().Update(context.TODO(), sf)
-	if err != nil {
-		log.Errorf("can not update ServiceFence %s, %+v", req.NamespacedName.Name, err)
-		return reconcile.Result{}, err
-	}
 	return reconcile.Result{}, nil
 }
 

@@ -344,6 +344,7 @@ func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, *sync.
 	watcher := util.ListWatcher(context.Background(), lw)
 
 	go func() {
+		log.Infof("Endpoint cacher is running")
 		for {
 			e, ok := <-watcher.ResultChan()
 			if !ok {
@@ -353,7 +354,7 @@ func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, *sync.
 
 			ep, ok := e.Object.(*v1.Endpoints)
 			if !ok {
-				log.Errorf("invalid type of object in watcher event")
+				log.Errorf("invalid type of object in endpoint watcher event")
 				continue
 			}
 

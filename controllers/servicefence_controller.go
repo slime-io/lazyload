@@ -21,13 +21,12 @@ import (
 	"fmt"
 	"reflect"
 	"slime.io/slime/framework/apis/config/v1alpha1"
+	"slime.io/slime/framework/model"
 	"slime.io/slime/framework/model/metric"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"slime.io/slime/framework/model"
 
 	istio "istio.io/api/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
@@ -53,16 +52,19 @@ import (
 // ServicefenceReconciler reconciles a Servicefence object
 type ServicefenceReconciler struct {
 	client.Client
-	Scheme            *runtime.Scheme
-	cfg               *v1alpha1.Fence
-	env               bootstrap.Environment
-	interestMeta      map[string]bool
-	interestMetaCopy  map[string]bool // for outside read
-	watcherMetricChan <-chan metric.Metric
-	tickerMetricChan  <-chan metric.Metric
-	reconcileLock     sync.RWMutex
-	staleNamespaces   map[string]bool
-	enabledNamespaces map[string]bool
+	Scheme               *runtime.Scheme
+	cfg                  *v1alpha1.Fence
+	env                  bootstrap.Environment
+	interestMeta         map[string]bool
+	interestMetaCopy     map[string]bool // for outside read
+	watcherMetricChan    <-chan metric.Metric
+	tickerMetricChan     <-chan metric.Metric
+	reconcileLock        sync.RWMutex
+	staleNamespaces      map[string]bool
+	enabledNamespaces    map[string]bool
+	nsSvcCache           *NsSvcCache
+	labelSvcCache        *LabelSvcCache
+	defaultAddNamespaces []string
 }
 
 // NewReconciler returns a new reconcile.Reconciler
@@ -77,15 +79,23 @@ func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env bootstrap.Envir
 	}
 
 	r := &ServicefenceReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		env:               env,
-		interestMeta:      map[string]bool{},
-		interestMetaCopy:  map[string]bool{},
-		watcherMetricChan: pc.WatcherProducerConfig.MetricChan,
-		tickerMetricChan:  pc.TickerProducerConfig.MetricChan,
-		staleNamespaces:   map[string]bool{},
-		enabledNamespaces: map[string]bool{},
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		env:                  env,
+		interestMeta:         map[string]bool{},
+		interestMetaCopy:     map[string]bool{},
+		watcherMetricChan:    pc.WatcherProducerConfig.MetricChan,
+		tickerMetricChan:     pc.TickerProducerConfig.MetricChan,
+		staleNamespaces:      map[string]bool{},
+		enabledNamespaces:    map[string]bool{},
+		defaultAddNamespaces: []string{env.Config.Global.IstioNamespace, env.Config.Global.SlimeNamespace},
+	}
+
+	// start service related cache
+	r.nsSvcCache, r.labelSvcCache, err = newSvcCache(env.K8SClient)
+	if err != nil {
+		log.Errorf("init LabelSvcCache err: %v", err)
+		return nil
 	}
 
 	// reconciler defines producer metric handler
@@ -143,9 +153,9 @@ func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	diff := r.updateVisitedHostStatus(instance)
 	r.recordVisitor(instance, diff)
 	if instance.Spec.Enable {
+		err = r.refreshSidecar(instance)
 		r.interestMeta[req.NamespacedName.String()] = true
 		r.updateInterestMetaCopy()
-		err = r.refreshSidecar(instance)
 	}
 
 	return ctrl.Result{}, err
@@ -167,7 +177,7 @@ func (r *ServicefenceReconciler) getInterestMeta() map[string]bool {
 
 func (r *ServicefenceReconciler) refreshSidecar(instance *lazyloadv1alpha1.ServiceFence) error {
 	log := log.WithField("reporter", "ServicefenceReconciler").WithField("function", "refreshSidecar")
-	sidecar, err := newSidecar(instance, r.env)
+	sidecar, err := r.newSidecar(instance, r.env)
 	if err != nil {
 		log.Errorf("servicefence generate sidecar failed, %+v", err)
 		return err
@@ -295,7 +305,54 @@ func parseHost(sourceNs, h string) *types.NamespacedName {
 	return nil // unknown host format, maybe external host
 }
 
-func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.ServiceFence) Diff {
+func (r *ServicefenceReconciler) updateVisitedHostStatus(sf *lazyloadv1alpha1.ServiceFence) Diff {
+
+	domains := r.genDomains(sf)
+
+	delta := Diff{
+		Deleted: make([]string, 0),
+		Added:   make([]string, 0),
+	}
+	for k, dest := range sf.Status.Domains {
+		if _, ok := domains[k]; !ok {
+			if dest.Status == lazyloadv1alpha1.Destinations_ACTIVE {
+				// active -> pending
+				domains[k] = &lazyloadv1alpha1.Destinations{
+					Hosts:  dest.Hosts,
+					Status: lazyloadv1alpha1.Destinations_EXPIREWAIT,
+				}
+			} else {
+				// pending -> delete
+				delta.Deleted = append(delta.Deleted, k)
+			}
+		}
+	}
+	for k := range domains {
+		if _, ok := sf.Status.Domains[k]; !ok {
+			delta.Added = append(delta.Added, k)
+		}
+	}
+	sf.Status.Domains = domains
+
+	_ = r.Client.Status().Update(context.TODO(), sf)
+
+	return delta
+}
+
+func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence) map[string]*lazyloadv1alpha1.Destinations {
+
+	domains := make(map[string]*lazyloadv1alpha1.Destinations)
+
+	addDomainsWithHost(domains, sf)
+	addDomainsWithNamespaceSelector(domains, sf, r.nsSvcCache)
+	addDomainsWithLabelSelector(domains, sf, r.labelSvcCache)
+	addDomainsWithMetricStatus(domains, sf)
+
+	return domains
+}
+
+// update domains with spec.host
+func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
 	checkStatus := func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status {
 		switch {
 		case strategy.Stable != nil:
@@ -313,26 +370,143 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 		}
 		return lazyloadv1alpha1.Destinations_ACTIVE
 	}
-
-	domains := make(map[string]*lazyloadv1alpha1.Destinations)
 	now := time.Now().Unix()
 
-	// update status of destinations of hosts with config
-	for h, strategy := range host.Spec.Host {
-		allHost := []string{h}
-		if hs := getDestination(h); len(hs) > 0 {
+	for h, strategy := range sf.Spec.Host {
+
+		fullHost := h
+		subDomains := strings.Split(h, ".")
+		switch len(subDomains) {
+		// full service name, like "reviews.default.svc.cluster.local", needs no action
+		case 5:
+		// short service name without namespace, like "reviews", needs to add namespace of servicefence and "svc.cluster.local"
+		case 1:
+			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], sf.Namespace)
+		// short service name with namespace, like "reviews.default", needs to add "svc.cluster.local"
+		case 2:
+			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], subDomains[1])
+		default:
+			log.Errorf("%s is invalid host, skip", h)
+			continue
+		}
+		if !isValidHost(fullHost) {
+			continue
+		}
+		if domains[fullHost] != nil {
+			continue
+		}
+
+		allHost := []string{fullHost}
+		if hs := getDestination(fullHost); len(hs) > 0 {
 			allHost = append(allHost, hs...)
 		}
 
-		domains[h] = &lazyloadv1alpha1.Destinations{
+		domains[fullHost] = &lazyloadv1alpha1.Destinations{
 			Hosts:  allHost,
 			Status: checkStatus(now, strategy),
 		}
 	}
+}
 
-	// update status with metric status
-	// -> (visited)host -> destinations
-	for metricName := range host.Status.MetricStatus {
+// update domains with spec.namespaceSelector
+func addDomainsWithNamespaceSelector(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
+	nsSvcCache *NsSvcCache) {
+
+	nsSvcCache.RLock()
+	defer nsSvcCache.RUnlock()
+
+	for _, ns := range sf.Spec.NamespaceSelector {
+		svcs, ok := nsSvcCache.Data[ns]
+		if !ok {
+			continue
+		}
+		for svc := range svcs {
+			subdomains := strings.Split(svc, "/")
+			fullHost := fmt.Sprintf("%s.%s.svc.cluster.local", subdomains[1], subdomains[0])
+			if !isValidHost(fullHost) {
+				continue
+			}
+			if domains[fullHost] != nil {
+				continue
+			}
+			allHost := []string{fullHost}
+			if hs := getDestination(fullHost); len(hs) > 0 {
+				allHost = append(allHost, hs...)
+			}
+			domains[fullHost] = &lazyloadv1alpha1.Destinations{
+				Hosts:  allHost,
+				Status: lazyloadv1alpha1.Destinations_ACTIVE,
+			}
+		}
+	}
+}
+
+// update domains with spec.labelSelector
+func addDomainsWithLabelSelector(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
+	labelSvcCache *LabelSvcCache) {
+
+	labelSvcCache.RLock()
+	defer labelSvcCache.RUnlock()
+
+	for _, selector := range sf.Spec.LabelSelector {
+
+		var result map[string]struct{}
+		// generate result for this selector
+		for k, v := range selector.Selector {
+			label := LabelItem{
+				Name:  k,
+				Value: v,
+			}
+			svcs := labelSvcCache.Data[label]
+			if svcs == nil {
+				result = nil
+				break
+			}
+			// init result
+			if result == nil {
+				result = make(map[string]struct{}, len(svcs))
+				for svc := range svcs {
+					result[svc] = struct{}{}
+				}
+			} else {
+				// check result for other labels
+				for re := range result {
+					if _, ok := svcs[re]; !ok {
+						// not exist svc in this label cache
+						delete(result, re)
+					}
+				}
+			}
+		}
+
+		// get hosts of each service
+		for re := range result {
+			subdomains := strings.Split(re, "/")
+			fullHost := fmt.Sprintf("%s.%s.svc.cluster.local", subdomains[1], subdomains[0])
+			if !isValidHost(fullHost) {
+				continue
+			}
+			if domains[fullHost] != nil {
+				continue
+			}
+			allHost := []string{fullHost}
+			if hs := getDestination(fullHost); len(hs) > 0 {
+				allHost = append(allHost, hs...)
+			}
+			domains[fullHost] = &lazyloadv1alpha1.Destinations{
+				Hosts:  allHost,
+				Status: lazyloadv1alpha1.Destinations_ACTIVE,
+			}
+		}
+
+	}
+
+}
+
+// update domains with Status.MetricStatus
+func addDomainsWithMetricStatus(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
+
+	for metricName := range sf.Status.MetricStatus {
 		metricName = strings.Trim(metricName, "{}")
 		if !strings.HasPrefix(metricName, "destination_service") && !strings.HasPrefix(metricName, "request_host") {
 			continue
@@ -349,15 +523,20 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 		}
 
 		fullHost = h
-		{
-			subDomains := strings.Split(h, ".")
-			if len(subDomains) == 1 { // shortname
-				fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], host.Namespace)
-			} else if len(subDomains) == 2 { // shortname.ns
-				fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], subDomains[1])
-			}
+		subDomains := strings.Split(h, ".")
+		switch len(subDomains) {
+		// full service name, like "reviews.default.svc.cluster.local", needs no action
+		case 5:
+		// short service name without namespace, like "reviews", needs to add namespace of servicefence and "svc.cluster.local"
+		case 1:
+			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], sf.Namespace)
+		// short service name with namespace, like "reviews.default", needs to add "svc.cluster.local"
+		case 2:
+			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], subDomains[1])
+		default:
+			log.Errorf("%s is invalid host, skip", h)
+			continue
 		}
-
 		if !isValidHost(fullHost) {
 			continue
 		}
@@ -370,73 +549,55 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(host *lazyloadv1alpha1.
 			allHost = append(allHost, hs...)
 		}
 
-		domains[h] = &lazyloadv1alpha1.Destinations{
+		domains[fullHost] = &lazyloadv1alpha1.Destinations{
 			Hosts:  allHost,
 			Status: lazyloadv1alpha1.Destinations_ACTIVE,
 		}
 	}
-
-	delta := Diff{
-		Deleted: make([]string, 0),
-		Added:   make([]string, 0),
-	}
-	for k, dest := range host.Status.Domains {
-		if _, ok := domains[k]; !ok {
-			if dest.Status == lazyloadv1alpha1.Destinations_ACTIVE {
-				// active -> pending
-				domains[k] = &lazyloadv1alpha1.Destinations{
-					Hosts:  dest.Hosts,
-					Status: lazyloadv1alpha1.Destinations_EXPIREWAIT,
-				}
-			} else {
-				// pending -> delete
-				delta.Deleted = append(delta.Deleted, k)
-			}
-		}
-	}
-	for k := range domains {
-		if _, ok := host.Status.Domains[k]; !ok {
-			delta.Added = append(delta.Added, k)
-		}
-	}
-	host.Status.Domains = domains
-
-	_ = r.Client.Status().Update(context.TODO(), host)
-
-	return delta
 }
 
-func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env bootstrap.Environment) (*v1alpha3.Sidecar, error) {
-	host := make([]string, 0)
-	if !vhost.Spec.Enable {
+func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, env bootstrap.Environment) (*v1alpha3.Sidecar, error) {
+	hosts := make([]string, 0)
+
+	if !sf.Spec.Enable {
 		return nil, nil
 	}
-	for _, v := range vhost.Status.Domains {
+
+	for _, ns := range r.defaultAddNamespaces {
+		hosts = append(hosts, ns+"/*")
+	}
+
+	for _, ns := range sf.Spec.NamespaceSelector {
+		if !r.isDefaultAddNs(ns) {
+			hosts = append(hosts, ns+"/*")
+		}
+	}
+
+	for _, v := range sf.Status.Domains {
 		if v.Status == lazyloadv1alpha1.Destinations_ACTIVE || v.Status == lazyloadv1alpha1.Destinations_EXPIREWAIT {
 			for _, h := range v.Hosts {
-				host = append(host, "*/"+h)
+				hosts = append(hosts, "*/"+h)
 			}
 		}
 	}
-	// sort host to avoid map range random feature resulting in sidecar constant updates
-	sort.Strings(host)
 
-	// 需要加入一条根namespace的策略
-	host = append(host, env.Config.Global.IstioNamespace+"/*")
-	host = append(host, env.Config.Global.SlimeNamespace+"/*")
 	// check whether using namespace global-sidecar
 	// if so, init config of sidecar will adds */global-sidecar.${svf.ns}.svc.cluster.local
 	if env.Config.Global.Misc["global-sidecar-mode"] == "namespace" {
-		host = append(host, fmt.Sprintf("*/global-sidecar.%s.svc.cluster.local", vhost.Namespace))
+		hosts = append(hosts, fmt.Sprintf("*/global-sidecar.%s.svc.cluster.local", sf.Namespace))
 	}
+
+	// sort hosts so that it follows the Equals semantics
+	sort.Strings(hosts)
+
 	sidecar := &istio.Sidecar{
 		WorkloadSelector: &istio.WorkloadSelector{
-			Labels: map[string]string{env.Config.Global.Service: vhost.Name},
+			Labels: map[string]string{env.Config.Global.Service: sf.Name},
 		},
 		Egress: []*istio.IstioEgressListener{
 			{
 				// Bind:  "0.0.0.0",
-				Hosts: host,
+				Hosts: hosts,
 			},
 		},
 	}
@@ -447,8 +608,8 @@ func newSidecar(vhost *lazyloadv1alpha1.ServiceFence, env bootstrap.Environment)
 	}
 	ret := &v1alpha3.Sidecar{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      vhost.Name,
-			Namespace: vhost.Namespace,
+			Name:      sf.Name,
+			Namespace: sf.Namespace,
 		},
 		Spec: spec,
 	}
@@ -491,7 +652,7 @@ func (r *ServicefenceReconciler) Subscribe(host string, destination interface{})
 
 		r.updateVisitedHostStatus(visitorSf)
 
-		sidecar, err := newSidecar(visitorSf, r.env)
+		sidecar, err := r.newSidecar(visitorSf, r.env)
 		if sidecar == nil {
 			continue
 		}
@@ -558,6 +719,15 @@ func isValidHost(h string) bool {
 		return false
 	}
 	return true
+}
+
+func (r *ServicefenceReconciler) isDefaultAddNs(ns string) bool {
+	for _, defaultNs := range r.defaultAddNamespaces {
+		if defaultNs == ns {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ServicefenceReconciler) SetupWithManager(mgr ctrl.Manager) error {
