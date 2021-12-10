@@ -79,11 +79,35 @@ message Timestamp {
     int32 nanos = 2;
 }
 
+// Spec Example
+//   spec:
+//    enable: true
+//    host:
+//      reviews.default.svc.cluster.local: # stable dependency of reviews.default service
+//        stable:
+//    namespaceSelector: # Match namespace names, multiple namespaces are 'or' relations, static dependency
+//      - foo
+//      - bar
+//    labelSelector: # Match service label, multiple selectors are 'or' relationship, static dependency
+//      - selector:
+//          project: back
+//      - selector: # labels in same selector are 'and' relationship
+//          project: front
+//          group: web
 message ServiceFenceSpec {
     map<string, RecyclingStrategy> host = 1;
     // Switch to render servicefence as sidecar
     bool enable = 2;
+    // services in these namespaces are all static dependency, will not expire
+    repeated string namespaceSelector = 3;
+    // services match one selector of the label selector are all static dependency, will not expire
+    repeated Selector labelSelector = 4;
 }
+
+message Selector {
+    map<string, string> selector = 1;
+}
+
 message RecyclingStrategy {
 
     message Stable {
