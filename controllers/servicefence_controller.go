@@ -106,8 +106,10 @@ func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env bootstrap.Envir
 	metric.NewProducer(pc)
 	log.Infof("producers starts")
 
-	if env.Config.Metric != nil {
+	if env.Config.Metric != nil || env.Config.Global.Misc["metricSourceType"] == MetricSourceTypeAccesslog {
 		go r.WatchMetric()
+	} else {
+		log.Warningf("watching metric is not running")
 	}
 
 	return r
@@ -583,7 +585,7 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 
 	// check whether using namespace global-sidecar
 	// if so, init config of sidecar will adds */global-sidecar.${svf.ns}.svc.cluster.local
-	if env.Config.Global.Misc["global-sidecar-mode"] == "namespace" {
+	if env.Config.Global.Misc["globalSidecarMode"] == "namespace" {
 		hosts = append(hosts, fmt.Sprintf("*/global-sidecar.%s.svc.cluster.local", sf.Namespace))
 	}
 
