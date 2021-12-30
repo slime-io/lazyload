@@ -53,7 +53,7 @@ func (r *ServicefenceReconciler) handleWatcherEvent(event trigger.WatcherEvent) 
 	var hs []metric.Handler
 
 	// check metric source type
-	switch r.env.Config.Global.Misc["metric_source_type"] {
+	switch r.env.Config.Global.Misc["metricSourceType"] {
 	case MetricSourceTypePrometheus:
 		for pName, pHandler := range r.env.Config.Metric.Prometheus.Handlers {
 			hs = append(hs, generateHandler(event.NN.Name, event.NN.Namespace, pName, pHandler))
@@ -80,7 +80,7 @@ func (r *ServicefenceReconciler) handleTickerEvent(event trigger.TickerEvent) me
 	// check metric source type
 	qm := make(map[string][]metric.Handler)
 
-	switch r.env.Config.Global.Misc["metric_source_type"] {
+	switch r.env.Config.Global.Misc["metricSourceType"] {
 	case MetricSourceTypePrometheus:
 		for meta := range r.getInterestMeta() {
 			namespace, name := strings.Split(meta, "/")[0], strings.Split(meta, "/")[1]
@@ -118,7 +118,7 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 	var accessLogSourceConfig metric.AccessLogSourceConfig
 	var err error
 
-	switch env.Config.Global.Misc["metric_source_type"] {
+	switch env.Config.Global.Misc["metricSourceType"] {
 	case MetricSourceTypePrometheus:
 		enablePrometheusSource = true
 		prometheusSourceConfig, err = newPrometheusSourceConfig(env)
@@ -128,7 +128,7 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 	case MetricSourceTypeAccesslog:
 		enablePrometheusSource = false
 		// init log source port
-		port := env.Config.Global.Misc["log_source_port"]
+		port := env.Config.Global.Misc["logSourcePort"]
 
 		ipToSvcCache, cacheLock, err := newIpToSvcCache(env.K8SClient)
 		if err != nil {
@@ -146,7 +146,7 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 			},
 		}
 	default:
-		return nil, stderrors.New("wrong metric_source_type")
+		return nil, stderrors.New("wrong metricSourceType")
 	}
 
 	// init whole producer config
@@ -233,7 +233,7 @@ func accessLogHandler(logEntry []*data_accesslog.HTTPAccessLogEntry, ipToSvcCach
 		}
 
 		// fetch destinationSvcMeta
-		destinationSvc := spliceDestinationSvc(entry)
+		destinationSvc := spliceDestinationSvc(entry, sourceSvc)
 		if destinationSvc == "" {
 			continue
 		}
@@ -290,21 +290,41 @@ func spliceSourceSvc(sourceIp string, ipToSvcCache map[string]string, cacheLock 
 	return "", nil
 }
 
-func spliceDestinationSvc(entry *data_accesslog.HTTPAccessLogEntry) string {
+func spliceDestinationSvc(entry *data_accesslog.HTTPAccessLogEntry, sourceSvc string) string {
 	log := log.WithField("reporter", "accesslog convertor").WithField("function", "spliceDestinationSvc")
+	var destSvc string
 	upstreamCluster := entry.CommonProperties.UpstreamCluster
 	parts := strings.Split(upstreamCluster, "|")
 	if len(parts) != 4 {
-		log.Debugf("UpstreamCluster parts number is not 4, skip")
+		log.Errorf("UpstreamCluster is wrong: parts number is not 4, skip")
 		return ""
 	}
-	if parts[0] != "outbound" {
-		log.Debugf("UpstreamCluster parts[0] is not outbound, skip")
+	// only handle inbound access log
+	if parts[0] != "inbound" {
+		log.Debugf("This log is not inbound, skip")
 		return ""
 	}
-	parts = strings.Split(parts[3], ".")
-	log.Debugf("DestinationSvc is: %s", "{destination_service=\""+parts[0]+"."+parts[1]+".svc.cluster.local"+"\"}")
-	return "{destination_service=\"" + parts[0] + "." + parts[1] + ".svc.cluster.local" + "\"}"
+	// get destination service info from request.authority
+	auth := entry.Request.Authority
+	dest := strings.Split(auth, ":")[0]
+	destParts := strings.Split(dest, ".")
+	switch len(destParts) {
+	case 1:
+		srcParts := strings.Split(sourceSvc, "/")
+		destSvc = dest + "." + srcParts[0] + ".svc.cluster.local"
+	case 2:
+		destSvc = dest + ".svc.cluster.local"
+	case 3:
+		destSvc = dest + ".cluster.local"
+	case 5:
+		destSvc = dest
+	default:
+		log.Errorf("%s is invalid request authority, skip", auth)
+		return ""
+	}
+
+	log.Debugf("DestinationSvc is: %s", "{destination_service=\""+destSvc+"\"}")
+	return "{destination_service=\"" + destSvc + "\"}"
 }
 
 func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, *sync.RWMutex, error) {
