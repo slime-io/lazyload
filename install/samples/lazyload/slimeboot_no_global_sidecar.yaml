@@ -7,16 +7,16 @@ spec:
   image:
     pullPolicy: Always
     repository: docker.io/slimeio/slime-lazyload
-    tag: v0.1.1-6a9f66c
+    tag: master-88a49f0
   module:
-    - fence:
+    - name: lazyload
+      fence:
         enable: true
         wormholePort:
           - "9080"
-      name: slime-fence
       global:
         misc:
-          global-sidecar-mode: no
+          globalSidecarMode: no
       metric:
         prometheus:
           address: http://prometheus.istio-system:9090

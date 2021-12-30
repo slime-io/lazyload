@@ -1,13 +1,15 @@
 - [懒加载教程](#懒加载教程)
   - [架构](#架构)
   - [安装和使用](#安装和使用)
-    - [使用namespace级别的global-sidecar](#使用namespace级别的global-sidecar)
-    - [使用集群唯一的global-sidecar](#使用集群唯一的global-sidecar)
-    - [不使用global-sidecar组件](#不使用global-sidecar组件)
-  - [其他特性介绍](#其他特性介绍)
+    - [cluster + accesslog](#cluster--accesslog)
+    - [cluster + prometheus](#cluster--prometheus)
+    - [namespace+accesslog](#namespaceaccesslog)
+    - [namespace+prometheus](#namespaceprometheus)
+  - [特性介绍](#特性介绍)
     - [基于Accesslog开启懒加载](#基于accesslog开启懒加载)
     - [基于namespace/service label自动生成ServiceFence](#基于namespaceservice-label自动生成servicefence)
     - [自定义兜底流量分派](#自定义兜底流量分派)
+    - [静态服务依赖关系添加](#静态服务依赖关系添加)
     - [日志输出到本地并轮转](#日志输出到本地并轮转)
       - [创建存储卷](#创建存储卷)
       - [在SlimeBoot中声明挂载信息](#在slimeboot中声明挂载信息)
@@ -22,8 +24,14 @@
     - [卸载](#卸载)
     - [补充说明](#补充说明)
   - [FAQ](#faq)
-    - [global-sidecar-pilot的意义？](#global-sidecar-pilot的意义)
-    - [global sidecar不能正常启动？](#global-sidecar不能正常启动)
+    - [支持的Istio版本？](#支持的istio版本)
+    - [为什么必须指定服务端口？](#为什么必须指定服务端口)
+    - [为什么必须指定使用懒加载的namespace列表？](#为什么必须指定使用懒加载的namespace列表)
+    - [~~global-sidecar-pilot的意义？~~（组件已废弃）](#global-sidecar-pilot的意义组件已废弃)
+    - [~~global sidecar不能正常启动？~~（已解决）](#global-sidecar不能正常启动已解决)
+
+
+
 
 
 # 懒加载教程
@@ -32,65 +40,94 @@
 
 
 
-![](./media/lazyload-architecture-2021-10-19.png)
+![](./media/lazyload-architecture-20211222_zh.png)
 
-注：绿色为lazyload controller内部逻辑
+注：绿色箭头为lazyload controller内部逻辑，黄色箭头为global-sidecar内部逻辑。
 
 过程说明：
 
-0. 部署lazyload，会创建出lazyload, global-sidecar-pilot, global-sidecar等应用，给特定服务启用懒加载时，还会创建servicefence以及sidecar
+1. 部署Lazyload模块，自动创建global-sidecar应用，Istiod会为global-sidecar应用添加标准sidecar（envoy）
 
-1. global-sidecar-pilot从集群原有pilot处获取全量配置信息
+3. 为服务A启用懒加载
 
-2. global-sidecar-pilot针对global-sidecar的特殊需求，将通用配置调整成global-sidecar定制版后，推送配置给global-sidecar
+   3.1 创建ServiceFence A
 
-3. 为应用A启用懒加载
+   3.2 创建Sidecar（Istio CRD）A，根据静态配置（ServiceFence.spec）初始化
 
-   3.1 创建servicefence A
+   3.3 ApiServer感知到Sidecar A创建
 
-   3.2 创建sidecarsidecar A
+4. Istiod从ApiServer获取Sidecar A的内容
 
-   3.3 ApiServer 感知到sidecar A创建
+5. Istiod下发Sidecar A限定范围内的配置给Service A的sidecar
 
-4. Pilot从ApiServer获取Sidecar A的内容
+6. Service A发起访问Service B，由于Service A没有Service B的配置信息，请求发到global-sidecar的sidecar
 
-5. Pilot下发sidecar限定范围内的配置给App A的envoy
+6. global-sidecar处理
 
-6. App A发起访问App B，由于envoy没有App B的配置信息，请求经兜底路由，转发到global-sidecar
+   6.1 入流量拦截，如果是accesslog模式，sidecar会生成包含服务调用关系的accesslog
 
-7. global-sidecar拥有全量配置，正确转发请求到App B
+   6.2 global-sidecar应用根据请求头等信息，转换访问目标为Service B
 
-8. global-sidecar通过access log或者prometheus metric等方式上报调用关系App A->App B 
+   6.3 出流量拦截，sidecar拥有所有服务配置信息，找到Service B目标信息，发出请求
+
+7. 请求正确到达Service B
+
+8. global-sidecar通过accesslog方式上报调用关系Service A->Service B，如果是prometheus模式，则由应用方的sidecar生成、上报metric
 
 9. lazyload controller获取到调用关系
 
 10. lazyload更新懒加载配置
 
-    10.1 更新servicefence A，添加关于B的metric
+    10.1 更新ServiceFence A，添加关于B的metric
 
-    10.2 更新sidecarsidecar A，egress.hosts添加B信息
+    10.2 更新Sidecar A，egress.hosts添加B信息
 
-    10.3 ApiServer 感知到sidecar A更新
+    10.3 ApiServer 感知到Sidecar A更新
 
-11. Pilot从ApiServer获取Sidecar A新内容
+11. Istiod从ApiServer获取Sidecar A新内容
 
-12. Pilot下发sidecar限定范围内的配置给App A的envoy，新增了B的xDS内容
+12. Istiod下发Sidecar A限定范围内的配置给Service A的sidecar，新增了B的xDS内容
 
-13. A直接访问B成功
+13. 后续调用，Service A直接访问Service B成功
 
 
 
 ## 安装和使用
 
-### 使用namespace级别的global-sidecar
-
-请先按照安装slime-boot小节的指引安装slime-boot
-
-1. 使用Slime的配置懒加载功能需打开Fence模块，同时安装global-sidecar, pilot等附加组件，如下：
-
-   > [完整样例](./install/samples/lazyload/slimeboot_lazyload.yaml)
+请先按照安装slime-boot小节的指引安装slime-boot。使用懒加载功能需要在`SlimeBoot.spec.module`中添加`fence`，并且`enable: true`，同时指定global-sidecar组件的使用方式。如下
 
 ```yaml
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        # other config
+  component:
+    globalSidecar:
+      enable: true
+      # other config
+```
+
+
+
+根据global-sidecar部署方式与服务依赖的指标的来源不同，可分为四种模式。
+
+
+
+### cluster + accesslog
+
+该模式会部署一个global-sidecar应用，位于lazyload controller的namespace下，默认为mesh-operator。所有兜底请求都会发到这个global-sidecar应用。指标来源为global-sidecar的accesslog。
+
+> [完整样例](./install/samples/lazyload/slimeboot_cluster_accesslog.yaml)
+
+```yaml
+---
 apiVersion: config.netease.com/v1alpha1
 kind: SlimeBoot
 metadata:
@@ -103,118 +140,47 @@ spec:
     tag: {{your_lazyload_tag}}
   module:
     - name: lazyload
+      enable: true
       fence:
-        enable: true
-        wormholePort: 
-          - "{{your_port}}" # replace to your application service ports, and extend the list in case of multi ports
-      metric:
-        prometheus:
-          address: {{prometheus_address}} # replace to your prometheus address
-          handlers:
-            destination:
-              query: |
-                sum(istio_requests_total{source_app="$source_app",reporter="destination"})by(destination_service)
-              type: Group
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
+      global:
+        misc:
+          globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
+          metricSourceType: accesslog # infrom the metric source
   component:
     globalSidecar:
       enable: true
-      type: namespaced
-      namespace:
-        - {{your_namespace}} # replace to your service's namespace, and extend the list in case of multi namespaces
+      type: cluster # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: pod # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        labels: # optional, used for sidecarInject.mode = pod, indicate the labels for sidecar auto inject 
+          {{your_istio_autoinject_labels}}
       resources:
         requests:
           cpu: 200m
           memory: 200Mi
         limits:
-          cpu: 200m
-          memory: 200Mi
+          cpu: 400m
+          memory: 400Mi
       image:
-        repository: {{your_sidecar_repo}}
-        tag: {{your_sidecar_tag}}          
-    pilot:
-      enable: true
-      resources:
-        requests:
-          cpu: 200m
-          memory: 200Mi
-        limits:
-          cpu: 200m
-          memory: 200Mi
-      image:
-        repository: {{your_pilot_repo}}
-        tag: {{your_pilot_tag}}
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
 ```
 
 
 
-​	2.确认所有组件已正常运行：
+### cluster + prometheus
 
-```
-$ kubectl get po -n mesh-operator
-NAME                                    READY     STATUS    RESTARTS   AGE
-global-sidecar-pilot-796fb554d7-blbml   1/1       Running   0          27s
-lazyload-fbcd5dbd9-jvp2s                1/1       Running   0          27s
-slime-boot-68b6f88b7b-wwqnd             1/1       Running   0          39s
-```
+该模式会部署一个global-sidecar应用，位于lazyload controller的namespace下，默认为mesh-operator。所有兜底请求都会发到这个global-sidecar应用。指标来源为Prometheus。
 
-```
-$ kubectl get po -n {{your_namespace}}
-NAME                              READY     STATUS    RESTARTS   AGE
-global-sidecar-785b58d4b4-fl8j4   1/1       Running   0          68s
-```
-
-3. 打开配置懒加载：
-   业务namespace已有应用，在业务namespace中创建servicefence，执行`kubectl apply -f servicefence.yaml`
+> [完整样例](./install/samples/lazyload/slimeboot_cluster_prometheus.yaml)
 
 ```yaml
-apiVersion: microservice.slime.io/v1alpha1
-kind: ServiceFence
-metadata:
-  name: {{your_svc}}
-  namespace: {{you_namespace}}
-spec:
-  enable: true
-```
-
-4. 确认懒加载已开启
-   执行`kubectl get sidecar {{your svc}} -oyaml`，可以看到对应服务生成了一个sidecar，如下：
-
-```yaml
-apiVersion: networking.istio.io/v1beta1
-kind: Sidecar
-metadata:
-  name: {{your_svc}}
-  namespace: {{your_namespace}}
-  ownerReferences:
-  - apiVersion: microservice.slime.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: ServiceFence
-    name: {{your_svc}}
-spec:
-  egress:
-  - hosts:
-    - istio-system/*
-    - mesh-operator/*
-    - '*/global-sidecar.{{your ns}}.svc.cluster.local'
-  workloadSelector:
-    labels:
-      app: {{your_svc}}
-```
-
-
-
-### 使用集群唯一的global-sidecar   
-
-> [完整样例](./install/samples/lazyload/slimeboot_lazyload_cluster_global_sidecar.yaml)
->
-> 使用说明：
->
-> k8s体系里，短域名访问的流量只会来自于同namespace，跨namespace访问必须带有namespace信息。cluster级别的global-sidecar和业务应用往往不在同namespace下，缺少短域名的配置，其拥有的配置必然带有namespace信息，因此global-sidecar无法成功转发同namespace内的访问请求，导致超时 "HTTP/1.1 0 DC downstream_remote_disconnect"错误。
->
-> 所以，使用集群级global-sidecar时，应用间访问要携带namespace信息。
-
-```yaml
+---
 apiVersion: config.netease.com/v1alpha1
 kind: SlimeBoot
 metadata:
@@ -226,17 +192,19 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - fence:
-        enable: true
-        wormholePort:
-        - "{{your_port}}" # replace to your application service ports, and extend the list in case of multi ports
-      name: slime-fence
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
       global:
         misc:
-          global-sidecar-mode: cluster
-      metric:
+          globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
+      metric: # indicate the metric source
         prometheus:
-          address: {{prometheus_address}} # replace to your prometheus address
+          address: {{your_prometheus_address}}
           handlers:
             destination:
               query: |
@@ -245,34 +213,34 @@ spec:
   component:
     globalSidecar:
       enable: true
-      type: cluster
+      type: cluster # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: pod # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        labels: # optional, used for sidecarInject.mode = pod, indicate the labels for sidecar auto inject 
+          {{your_istio_autoinject_labels}}
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
       image:
-        repository: {{your_sidecar_repo}}
-        tag: {{your_sidecar_tag}}
-    pilot:
-      enable: true
-      image:
-        repository: {{your_pilot_repo}}
-        tag: {{your_pilot_tag}}
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
 ```
 
 
 
-### 不使用global-sidecar组件  
+### namespace+accesslog
 
-在开启allow_any的网格中，可以不使用global-sidecar组件。使用如下配置：
+该模式会在每个打算启用懒加载的namespace下部署一个global-sidecar应用。每个namespace的兜底请求都会发到同namespace下的global-sidecar应用。指标来源为global-sidecar的accesslog。
 
-> [完整样例](./install/samples/lazyload/slimeboot_lazyload_no_global_sidecar.yaml)
->
-> 使用说明：
->
-> 不使用global-sidecar组件可能会导致首次调用无法按照预先设定的路由规则进行，可能走到istio的默认兜底逻辑（一般是passthrough），从而倒回到原来的clusterIP访问服务，配置的virtualservice路由会暂时失效。
->
-> 场景：
->
-> 服务A访问服务B，但服务B的virtualservice会将访问服务B的请求转到服务C。由于没有global sidecar兜底，第一次请求会被istio透传，经PassthroughCluster到服务B。本来应该由服务C响应，变成服务B响应，出错。后面A的servicefence会添加上B，随即感知B的virtualservice将请求导向C，所以第一次之后的请求都会成功由C响应。
+> [完整样例](./install/samples/lazyload/slimeboot_namespace_accesslog.yaml)
 
 ```yaml
+---
 apiVersion: config.netease.com/v1alpha1
 kind: SlimeBoot
 metadata:
@@ -284,39 +252,107 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - fence:
-        enable: true
-        wormholePort:
-        - "{{your_port}}" # replace to your application service ports, and extend the list in case of multi ports
-      name: slime-fence
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
       global:
         misc:
-          global-sidecar-mode: no
-      metric:
+          metricSourceType: accesslog # indicate the metric source
+  component:
+    globalSidecar:
+      enable: true
+      type: namespace # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: namespace # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        #labels: # optional, used for sidecarInject.mode = pod
+          #sidecar.istio.io/inject: "true"
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
+      image:
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
+```
+
+
+
+### namespace+prometheus
+
+该模式会在每个打算启用懒加载的namespace下部署一个global-sidecar应用。每个namespace的兜底请求都会发到同namespace下的global-sidecar应用。指标来源为Prometheus。
+
+>[完整样例](./install/samples/lazyload/slimeboot_namespace_prometheus.yaml)
+
+```yaml
+---
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  image:
+    pullPolicy: Always
+    repository: docker.io/slimeio/slime-lazyload
+    tag: {{your_lazyload_tag}}
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
+      metric: # indicate the metric source
         prometheus:
-          address: {{prometheus_address}} # replace to your prometheus address
+          address: http://prometheus.istio-system:9090
           handlers:
             destination:
               query: |
                 sum(istio_requests_total{source_app="$source_app",reporter="destination"})by(destination_service)
               type: Group
+  component:
+    globalSidecar:
+      enable: true
+      type: namespace # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: namespace # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        #labels: # optional, used for sidecarInject.mode = pod
+          #sidecar.istio.io/inject: "true"
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
+      image:
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
 ```
 
-不使用global-sidecar组件可能会导致首次调用无法按照预先设定的路由规则进行。 
 
 
 
 
-
-## 其他特性介绍
+## 特性介绍
 
 ### 基于Accesslog开启懒加载
 
-指定SlimeBoot CR资源中`spec.module.global.misc.metric_source_type`等于`accesslog`会使用Accesslog获取服务调用关系，等于`prometheus`则使用Prometheus。
+指定SlimeBoot CR资源中`spec.module.global.misc.metricSourceType`等于`accesslog`会使用Accesslog获取服务调用关系，等于`prometheus`则使用Prometheus。
 
 使用Accesslog获取服务调用关系的大概过程：
 
-- slime-boot在创建global-sidecar时，发现`metric_source_type: accesslog`，额外生成一个configmap，内容是包含lazyload controller处理accesslog的地址信息的static_resources。再通过一个envoyfilter，将static_resources加入global-sidecar配置中，使得global-sidecar的accesslog会发送到lazyload controller
+- slime-boot在创建global-sidecar时，发现`metricSourceType: accesslog`，额外生成一个configmap，内容是包含lazyload controller处理accesslog的地址信息的static_resources。再通过一个envoyfilter，将static_resources加入global-sidecar配置中，使得global-sidecar的accesslog会发送到lazyload controller
 - global-sidecar完成兜底转发时会生成accesslog，包含了调用方和被调用方服务信息。global-sidecar将信息发送给lazyload controller
 - lazyload controller分析accesslog，获取到新的服务调用关系
 
@@ -334,16 +370,14 @@ spec:
           - "9080"
       global:
         misc:
-          metric_source_type: accesslog
+          metricSourceType: accesslog
 ```
 
-[完整样例](./install/samples/lazyload/slimeboot_lazyload_accesslog.yaml)
+[完整样例](./install/samples/lazyload/slimeboot_cluster_accesslog.yaml)
 
 
 
 ### 基于namespace/service label自动生成ServiceFence
-
-
 
 fence支持基于label的自动生成，也即可以通过打label `slime.io/serviceFenced`的方式来定义**”开启fence“功能的范围**。
 
@@ -379,8 +413,6 @@ fence支持基于label的自动生成，也即可以通过打label `slime.io/ser
 
 
 **配置样例**
-
-
 
 ```yaml
 apiVersion: v1
@@ -454,6 +486,12 @@ foo: bar
 **注意**：
 
 * 自定义分派场景，如果希望保持原有逻辑 “其他所有未定义流量走global sidecar” 的话，需要显式配置如上的最后一条
+
+
+
+### 静态服务依赖关系添加
+
+[用法待补充]
 
 
 
@@ -542,7 +580,7 @@ spec:
     - name: lazyload
       enable: true
       fence:
-        wormholePort: # replace to your application svc ports
+        wormholePort:
           - "9080"
       global:
         log:
@@ -565,7 +603,7 @@ spec:
           name: lazyload-storage
 ```
 
-[完整样例](./install/samples/lazyload/slimeboot_lazyload_logrotate.yaml)
+[完整样例](./install/samples/lazyload/slimeboot_logrotate.yaml)
 
 
 
@@ -600,15 +638,12 @@ $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload
 ```sh
 $ kubectl get slimeboot -n mesh-operator
 NAME       AGE
-lazyload   2m20s
+lazyload   12s
 $ kubectl get pod -n mesh-operator
-NAME                                    READY   STATUS             RESTARTS   AGE
-global-sidecar-pilot-7bfcdc55f6-977k2   1/1     Running            0          2m25s
-lazyload-b9646bbc4-ml5dr                1/1     Running            0          2m25s
-slime-boot-7b474c6d47-n4c9k             1/1     Running            0          4m55s
-$ kubectl get po -n default
 NAME                              READY   STATUS    RESTARTS   AGE
-global-sidecar-59f4c5f989-ccjjg   1/1     Running   0          3m9s
+global-sidecar-7dd48b65c8-gc7g4   2/2     Running   0          18s
+lazyload-85987bbd4b-djshs         1/1     Running   0          18s
+slime-boot-6f778b75cd-4v675       1/1     Running   0          26s
 ```
 
 
@@ -628,7 +663,6 @@ $ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_
 $ kubectl get po -n default
 NAME                              READY   STATUS    RESTARTS   AGE
 details-v1-79f774bdb9-6vzj6       2/2     Running   0          60s
-global-sidecar-59f4c5f989-ccjjg   1/1     Running   0          5m12s
 productpage-v1-6b746f74dc-vkfr7   2/2     Running   0          59s
 ratings-v1-b6994bb9-klg48         2/2     Running   0          59s
 reviews-v1-545db77b95-z5ql9       2/2     Running   0          59s
@@ -644,11 +678,21 @@ reviews-v3-84779c7bbc-gb52x       2/2     Running   0          60s
 
 ### 开启懒加载
 
-创建servicefence，为productpage服务启用懒加载。
+创建servicefence，为productpage服务启用懒加载，共有两种方式：
+
+- 直接手动创建servicefence
 
 ```sh
 $ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/lazyload/servicefence_productpage.yaml"
 ```
+
+- 修改service自动创建servicefence
+
+```sh
+$ kubectl label service productpage -n default slime.io/serviceFenced=true
+```
+
+
 
 确认生成servicefence和sidecar对象。
 
@@ -659,11 +703,26 @@ productpage   12s
 $ kubectl get sidecar -n default
 NAME          AGE
 productpage   22s
+$ kubectl get servicefence productpage -n default -oyaml
+apiVersion: microservice.slime.io/v1alpha1
+kind: ServiceFence
+metadata:
+  creationTimestamp: "2021-12-23T06:21:14Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/created-by: fence-controller
+  name: productpage
+  namespace: default
+  resourceVersion: "10662886"
+  uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+spec:
+  enable: true
+status: {}
 $ kubectl get sidecar productpage -n default -oyaml
 apiVersion: networking.istio.io/v1beta1
 kind: Sidecar
 metadata:
-  creationTimestamp: "2021-08-04T03:54:35Z"
+  creationTimestamp: "2021-12-23T06:21:14Z"
   generation: 1
   name: productpage
   namespace: default
@@ -673,19 +732,19 @@ metadata:
     controller: true
     kind: ServiceFence
     name: productpage
-    uid: d36e4be7-d66c-4f77-a9ff-14a4bf4641e6
-  resourceVersion: "324118"
-  uid: ec283a14-8746-42d3-87d1-0ee4538f0ac0
+    uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+  resourceVersion: "10662887"
+  uid: 85f9dc11-6d83-4b84-8d1b-14bd031cc57b
 spec:
   egress:
   - hosts:
     - istio-system/*
     - mesh-operator/*
-    - '*/global-sidecar.default.svc.cluster.local'
   workloadSelector:
     labels:
       app: productpage
 ```
+
 
 
 ### 首次访问观察
@@ -693,20 +752,55 @@ spec:
 第一次访问productpage，并使用`kubectl logs -f productpage-xxx -c istio-proxy -n default`观察访问日志。
 
 ```
-[2021-08-06T06:04:36.912Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 43 43 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "48257260-1f5f-92fa-a18f-ff8e2b128487" "details:9080" "172.17.0.17:9080" outbound|9080||global-sidecar.default.svc.cluster.local 172.17.0.11:45422 10.101.207.55:9080 172.17.0.11:56376 - -
-[2021-08-06T06:04:36.992Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 375 1342 1342 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "48257260-1f5f-92fa-a18f-ff8e2b128487" "reviews:9080" "172.17.0.17:9080" outbound|9080||global-sidecar.default.svc.cluster.local 172.17.0.11:45428 10.106.126.147:9080 172.17.0.11:41130 - -
+[2021-12-23T06:24:55.527Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 12 12 "-" "curl/7.52.1" "7ec25152-ca8e-923b-a736-49838ce316f4" "details:9080" "172.17.0.10:80" outbound|9080||global-sidecar.mesh-operator.svc.cluster.local 172.17.0.11:45194 10.102.66.227:9080 172.17.0.11:40210 - -
+
+[2021-12-23T06:24:55.552Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 295 30 29 "-" "curl/7.52.1" "7ec25152-ca8e-923b-a736-49838ce316f4" "reviews:9080" "172.17.0.10:80" outbound|9080||global-sidecar.mesh-operator.svc.cluster.local 172.17.0.11:45202 10.104.97.115:9080 172.17.0.11:40880 - -
+
+[2021-12-23T06:24:55.490Z] "GET /productpage HTTP/1.1" 200 - via_upstream - "-" 0 4183 93 93 "-" "curl/7.52.1" "7ec25152-ca8e-923b-a736-49838ce316f4" "productpage:9080" "172.17.0.11:9080" inbound|9080|| 127.0.0.6:48621 172.17.0.11:9080 172.17.0.7:41458 outbound_.9080_._.productpage.default.svc.cluster.local default
 ```
 
-可以看出，此次outbound后端访问global-sidecar.default.svc.cluster.local。
+可以看出，此次outbound后端访问global-sidecar.mesh-operator.svc.cluster.local。
 
-观察sidecar内容
+观察servicefence
 
 ```sh
-$ kubectl get sidecar productpage -oyaml
+$ kubectl get servicefence productpage -n default -oyaml
+apiVersion: microservice.slime.io/v1alpha1
+kind: ServiceFence
+metadata:
+  creationTimestamp: "2021-12-23T06:21:14Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/created-by: fence-controller
+  name: productpage
+  namespace: default
+  resourceVersion: "10663136"
+  uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+spec:
+  enable: true
+status:
+  domains:
+    details.default.svc.cluster.local:
+      hosts:
+      - details.default.svc.cluster.local
+    reviews.default.svc.cluster.local:
+      hosts:
+      - reviews.default.svc.cluster.local
+  metricStatus:
+    '{destination_service="details.default.svc.cluster.local"}': "1"
+    '{destination_service="reviews.default.svc.cluster.local"}': "1"
+```
+
+
+
+观察sidecar
+
+```sh
+$ kubectl get sidecar productpage -n default -oyaml
 apiVersion: networking.istio.io/v1beta1
 kind: Sidecar
 metadata:
-  creationTimestamp: "2021-08-06T03:23:05Z"
+  creationTimestamp: "2021-12-23T06:21:14Z"
   generation: 2
   name: productpage
   namespace: default
@@ -716,9 +810,9 @@ metadata:
     controller: true
     kind: ServiceFence
     name: productpage
-    uid: 27853fe0-01b3-418f-a785-6e49db0d201a
-  resourceVersion: "498810"
-  uid: e923e426-f0f0-429a-a447-c6102f334904
+    uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+  resourceVersion: "10663141"
+  uid: 85f9dc11-6d83-4b84-8d1b-14bd031cc57b
 spec:
   egress:
   - hosts:
@@ -726,7 +820,6 @@ spec:
     - '*/reviews.default.svc.cluster.local'
     - istio-system/*
     - mesh-operator/*
-    - '*/global-sidecar.default.svc.cluster.local'
   workloadSelector:
     labels:
       app: productpage
@@ -741,11 +834,14 @@ reviews 和 details 被自动加入！
 第二次访问productpage，观察productpage应用日志
 
 ```
-[2021-08-06T06:05:47.068Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 46 46 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "1c1c8e23-24d3-956e-aec0-e4bcff8df251" "details:9080" "172.17.0.6:9080" outbound|9080||details.default.svc.cluster.local 172.17.0.11:58522 10.101.207.55:9080 172.17.0.11:57528 - default
-[2021-08-06T06:05:47.160Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 379 1559 1558 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "1c1c8e23-24d3-956e-aec0-e4bcff8df251" "reviews:9080" "172.17.0.10:9080" outbound|9080||reviews.default.svc.cluster.local 172.17.0.11:60104 10.106.126.147:9080 172.17.0.11:42280 - default
+[2021-12-23T06:26:47.700Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 13 12 "-" "curl/7.52.1" "899e918c-e44c-9dc2-9629-d8db191af972" "details:9080" "172.17.0.13:9080" outbound|9080||details.default.svc.cluster.local 172.17.0.11:50020 10.102.66.227:9080 172.17.0.11:42180 - default
+
+[2021-12-23T06:26:47.718Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 375 78 77 "-" "curl/7.52.1" "899e918c-e44c-9dc2-9629-d8db191af972" "reviews:9080" "172.17.0.16:9080" outbound|9080||reviews.default.svc.cluster.local 172.17.0.11:58986 10.104.97.115:9080 172.17.0.11:42846 - default
+
+[2021-12-23T06:26:47.690Z] "GET /productpage HTTP/1.1" 200 - via_upstream - "-" 0 5179 122 121 "-" "curl/7.52.1" "899e918c-e44c-9dc2-9629-d8db191af972" "productpage:9080" "172.17.0.11:9080" inbound|9080|| 127.0.0.6:51799 172.17.0.11:9080 172.17.0.7:41458 outbound_.9080_._.productpage.default.svc.cluster.local default
 ```
 
-可以看到，outbound日志的后端访问信息变为details.default.svc.cluster.local和reviews.default.svc.cluster.local。
+可以看到，outbound日志的后端访问信息变为details.default.svc.cluster.local和reviews.default.svc.cluster.local，直接访问成功。
 
 
 
@@ -793,16 +889,36 @@ $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload
 
 ## FAQ
 
-### global-sidecar-pilot的意义？
+### 支持的Istio版本？
 
-由于global-sidecar的作用不同于普通sidecar，需要一些定制逻辑，比如兜底envoyfilter不对global-sidecar生效否则会死循环等，global-sidecar并不能直接使用集群原有pilot的全量配置。global-sidecar-pilot会从集群原有pilot处获取全量配置后，会进行微调，再推送给global-sidecar。现有global-sidecar-pilot是基于istiod 1.7改造的。
-
-注：为了降低学习成本、增强兼容性，我们正在考虑去除global-sidecar-pilot，届时不再有定制化的pilot，完全兼容社区版本，预计在下一个大版本中实现此功能。
+Istio 1.8以后均支持，具体的兼容性说明详见[A note on the incompatibility of lazyload with some versions of istio](https://github.com/slime-io/lazyload/issues/26)
 
 
 
-### global sidecar不能正常启动？
+### 为什么必须指定服务端口？
 
-global sidecar启动报错`Internal:Error adding/updating listener(s) 0.0.0.0_15021: cannot bind '0.0.0.0:15021': Address already in use`，这错误通常是端口冲突导致。global-sidecar是以gateway模式运行的sidecar，它会绑定到真实端口上。具体来说是istio-ingressgateway使用了15021端口，这会导致global-sidecar的lds更新失败，修改ingressgateway的15021端口为其他值可解决。
+不指定服务端口信息，由于通常启用懒加载时，sidecar的默认内容只包含istio-system和mesh-operator的服务信息，一些特定端口往往没有服务暴露。由于Istio的机制，只有兜底路由的listener无意义会被移除，无法保证占位listener的存在。
 
-注：目前是通过端口规划来解决此问题，下个大版本中会摆脱这个局限。
+举个例子，bookinfo中服务暴露在"9080"端口，为productpage服务启用懒加载后，productpage的"9080" listener会被移除。再访问`details:9080`时，没有listener，会直接走到Passthrough逻辑，无法转到global-sidecar，也就实现不了服务依赖关系的获取。
+
+
+
+### 为什么必须指定使用懒加载的namespace列表？
+
+由于短域名访问的场景大量存在，不同namespace下需要补充不同的namespace信息。所以懒加载会在这些指定的namespace下分别创建envoyfilter，补充合适的namespace信息。
+
+
+
+### ~~global-sidecar-pilot的意义？~~（组件已废弃）
+
+~~由于global-sidecar的作用不同于普通sidecar，需要一些定制逻辑，比如兜底envoyfilter不对global-sidecar生效否则会死循环等，global-sidecar并不能直接使用集群原有pilot的全量配置。global-sidecar-pilot会从集群原有pilot处获取全量配置后，会进行微调，再推送给global-sidecar。现有global-sidecar-pilot是基于istiod 1.7改造的。~~
+
+~~注：为了降低学习成本、增强兼容性，我们正在考虑去除global-sidecar-pilot，届时不再有定制化的pilot，完全兼容社区版本，预计在下一个大版本中实现此功能。~~
+
+
+
+### ~~global sidecar不能正常启动？~~（已解决）
+
+~~global sidecar启动报错`Internal:Error adding/updating listener(s) 0.0.0.0_15021: cannot bind '0.0.0.0:15021': Address already in use`，这错误通常是端口冲突导致。global-sidecar是以gateway模式运行的sidecar，它会绑定到真实端口上。具体来说是istio-ingressgateway使用了15021端口，这会导致global-sidecar的lds更新失败，修改ingressgateway的15021端口为其他值可解决。~~
+
+~~注：目前是通过端口规划来解决此问题，下个大版本中会摆脱这个局限。~~

@@ -4,7 +4,7 @@
   - [Thinking](#thinking)
   - [Architecture](#architecture)
   - [Install & Use](#install--use)
-  - [Introduction of other features](#introduction-of-other-features)
+  - [Introduction of features](#introduction-of-features)
   - [Example](#example)
   - [E2E Test Introduction](#e2e-test-introduction)
   - [ServiceFence Instruction](#servicefence-instruction)
@@ -16,28 +16,28 @@
 
 ## Features
 
-1. Simple pass through forwarding design, independent of the number of services, no performance issues
-2. Pass through forwarding supports all traffic governance capabilities
-3. Suitable for scenarios where out-of-cluster services exist
-4. Support manual, automatic and other enable lazyload methods
-5. Supports multiple enable scopes like service level, namespace level, etc.
-6. Support Prometheus and Accesslog  metrics acquisition methods
+1. Supports 1.8+ versions of Istio, without invasiveness
+2. Forwarding process supports all Istio traffic capabilities
+3. Independent of the number of services, no performance issues
+4. Flexible enabled lazyload with support for Namespace, Service and other dimensions
+5. Support for dynamic service dependency acquisition methods such as Accesslog and Prometheus
+6. Support for adding static service dependencies, a combination of dynamic and static dependencies, comprehensive functionality
+
+
 
 
 
 ## Backgroud
 
-When there are too many services in cluster, envoy configuration is too much, and the new application will be in NotReady state for a long time. Configuring CR Sidecar for new application and automatically fetching the service dependencies and updating Sidecar can solve this problem.
+When there are too many services in cluster, envoy configuration is too much, and the new application will be in NotReady state for a long time. Configuring Custom Resource `Sidecar` for new application and automatically fetching the service dependencies and updating Sidecar can solve this problem.
 
 
 
 ## Thinking
 
-Bring another Sidecar, the global-sidecar, which is a globally shared Sidecar with a full configuration and service discovery information. The pass through route is replaced with a new one to the global-sidecar.
+Introduce a service `global-sidecar`, which is used for request last matching. It will be injected sidecar container by Istiod. with a full configuration and service discovery information. The pass through route is replaced with a new one to the global-sidecar.
 
-Global-sidecar requires some custom configuration, so global-sidecar-pilot is introduced. Global-sidecar-pilot generates configuration for global-sidecar based on the pilot configuration in the cluster.
-
-Bring new CR ServiceFence. Details at [ServiceFence Instruction](#ServiceFence Instruction)
+Bring new Custom Resource `ServiceFence`. Details at [ServiceFence Instruction](#ServiceFence Instruction)
 
 Finally, the control logic is included in the lazyload controller component. It will create ServiceFence and Sidecar for the lazyload enabled services, and update ServiceFence and Sidecar based on the service invocation relationship obtained from the configuration.
 
@@ -45,9 +45,9 @@ Finally, the control logic is included in the lazyload controller component. It 
 
 ## Architecture
 
+The module consists of a Lazyload controller, which does not need to inject a sidecar, and a global-sidecar, which does.
 
-
-<img src="./media/lazyload-architecture-2021-10-19-en.png" style="zoom:80%;" />
+<img src="./media/lazyload-architecture-20211222.png" style="zoom:80%;" />
 
 
 
@@ -59,24 +59,29 @@ Details at [Architecture](./lazyload_tutorials.md#Architecture)
 
 ## Install & Use
 
-Lazyload has 3 using modes: 
+- Depending on the deployment mode of global-sidecar, the module is currently divided into two modes.
+  - Clusrter mode: Using global-sidecar at the cluster level: the only global-sidecar application in the cluster
 
-- Use namespace level global-sidecar
-- Use cluster unique global-sidecar
-- Disable global-sidecar
+  - Namespace mode: global-sidecar at namespace level: one global-sidecar application per namespace using lazyload
+2. Depending on the source of the service dependency metrics, the module is divided into two modes.
+
+   - Accesslog mode: global-sidecar generates an accesslog with service dependencies through incoming traffic interception
+   - Prometheus mode: the business application generates a metric after completing an access, which is reported to prometheus; this mode requires the cluster to interface with prometheus
+
+In summary, there are four usage modes for the Lazyload module, with the cluster+accesslog mode being the most recommended.
 
 Details at [Install&Use](./lazyload_tutorials.md#install-and-use)
 
 
 
-## Introduction of other features
-
+## Introduction of features
 - Enable lazyload based on accesslog
 - Automatic ServiceFence generation based on namespace/service label
 - Custom undefined traffic dispatch
+- Support for adding static service dependencies
 - Log output to local file and rotate
 
-Details at [Introduction of other features](./lazyload_tutorials.md#Introduction-of-other-features)
+Details at [Introduction of features](./lazyload_tutorials.md#Introduction-of-features)
 
 
 

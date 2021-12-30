@@ -1,13 +1,15 @@
 - [Lazyload Turotails](#lazyload-turotails)
   - [Architecture](#architecture)
   - [Install-and-Use](#install-and-use)
-    - [Use namespace level global-sidecar](#use-namespace-level-global-sidecar)
-    - [Use cluster unique global-sidecar](#use-cluster-unique-global-sidecar)
-    - [Disable global-sidecar](#disable-global-sidecar)
-  - [Introduction of other features](#introduction-of-other-features)
+    - [cluster + accesslog](#cluster--accesslog)
+    - [cluster + prometheus](#cluster--prometheus)
+    - [namespace+accesslog](#namespaceaccesslog)
+    - [namespace+prometheus](#namespaceprometheus)
+  - [Introduction of features](#introduction-of-features)
     - [Enable lazyload based on accesslog](#enable-lazyload-based-on-accesslog)
     - [Automatic ServiceFence generation based on namespace/service label](#automatic-servicefence-generation-based-on-namespaceservice-label)
     - [Custom undefined traffic dispatch](#custom-undefined-traffic-dispatch)
+    - [Support for adding static service dependencies](#support-for-adding-static-service-dependencies)
     - [Logs output to local file and rotate](#logs-output-to-local-file-and-rotate)
       - [Creating Storage Volumes](#creating-storage-volumes)
       - [Declaring mount information in SlimeBoot](#declaring-mount-information-in-slimeboot)
@@ -22,8 +24,13 @@
     - [Uninstall](#uninstall)
     - [Remarks](#remarks)
   - [FAQ](#faq)
-    - [Meaning of global-sidecar-pilot?](#meaning-of-global-sidecar-pilot)
-    - [global sidecar does not start properly?](#global-sidecar-does-not-start-properly)
+    - [Istio versions supported?](#istio-versions-supported)
+    - [Why is it necessary to specify a service port?](#why-is-it-necessary-to-specify-a-service-port)
+    - [Why is it necessary to specify a list of namespaces for lazyload?](#why-is-it-necessary-to-specify-a-list-of-namespaces-for-lazyload)
+    - [~~Meaning of global-sidecar-pilot?~~ (component obsolete)](#meaning-of-global-sidecar-pilot-component-obsolete)
+    - [~~global sidecar does not start properly?~~ (Solved)](#global-sidecar-does-not-start-properly-solved)
+
+
 
 
 # Lazyload Turotails
@@ -32,33 +39,37 @@
 
 
 
-![](./media/lazyload-architecture-2021-10-19-en.png)
+![](./media/lazyload-architecture-20211222.png)
 
-* The green block is the internal logic of lazyload controller
+* The green arrows are the internal logic of lazyload controller, and the orange arrows are the internal logic of global-sidecar. 
 
 Instruction：
 
-0. Create lazyload, global-sidecar-pilot, global-sidecar when initialize. Create servicefence and sidecar when enable lazyload for a service.
+2. Deploy the Lazyload module, and Istiod will inject the standard sidecar (envoy) for the global-sidecar application
 
-1. Global-sidecar-pilot pulls full configuration from pilot in the cluster
+2. Enable lazyload for Service A
 
-2. Global-sidecar-pilot pushed customize full configuration to global-sidecar
+   2.1 Create ServiceFence A
 
-3. Enable lazyload for App A
+   2.2 Create Sidecar(Istio CRD) A, and initialize accrording to the static config of ServiceFence.spec
 
-   3.1 Create servicefence A
+   2.3 ApiServer senses sidecar A creation
 
-   3.2 Create sidecar A
+3. Istiod gets the content of Sidecar A
 
-   3.3 ApiServer senses sidecar A creation
+4. Istiod pushed new configuration to sidecar of Service A
 
-4. Pilot gets the content of Sidecar A
+5. Service A sends first request to Service B. sidecar A does not has information about Service B, then request is sent to global-sidecar.
 
-5. Pilot pushed new configuration to envoy of App A
+6. Global-sidecar operations
 
-6. App A sends first request to App B. Envoy A does not has information about App B, then request is sent to global-sidecar.
+   6.1 Inbound traffic is intercepted, and in accesslog mode, sidecar generates an accesslog containing the service invocation relationship
 
-7. Global-sidecar sends request to App B
+   6.2 The global-sidecar application converts the access target to Service B based on the request header and other information
+
+   6.3 Outbound traffic interception, where sidecar has all the service configuration information, finds the Service B target information and sends the request
+
+7. Request sends to Service B
 
 8. Global-sidecar reports relationships through access log or prometheus metric
 
@@ -66,31 +77,56 @@ Instruction：
 
 10. lazyload controller updates lazyload configuration
 
-    10.1 Update servicefence A adding infomation about App B
+    10.1 Update ServiceFence A adding infomation about Service B
 
-    10.2 Update sidecar A，adding egress.hosts of App B
+    10.2 Update Sidecar A，adding egress.hosts of Service B
 
-    10.3 ApiServer senses sidecar A update
+    10.3 ApiServer senses Sidecar A update
 
-11. Pilot gets the content of Sidecar A
+11. Istiod gets the content of Sidecar A
 
-12. Pilot pushed new configuration to envoy of App A
+12. Istiod pushed new configuration to sidecar of Service A
 
-13. App A sends request to App B directly
+13. Service A sends request to Service B directly
 
 
 
 ## Install-and-Use
 
-### Use namespace level global-sidecar
-
-Make sure slime-boot has been installed.
-
-1. Install the lazyload module and additional components, through slime-boot configuration:
-
-   > [Example](./install/samples/lazyload/slimeboot_lazyload.yaml)
+To use lazyload module, add `fence` to `SlimeBoot.spec.module` and `enable: true`, and specify how the global-sidecar component is used, like follows
 
 ```yaml
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        # other config
+  component:
+    globalSidecar:
+      enable: true
+      # other config
+```
+
+
+
+Depending on how the global-sidecar is deployed and the source of the metrics on which the service depends, there are four modes.
+
+
+
+### cluster + accesslog
+
+This mode deploys a global-sidecar application, in the namespace of the lazyload controller, defaulting to mesh-operator. The source of the metrics is the global-sidecar's accesslog.
+
+> [Full Example](./install/samples/lazyload/slimeboot_cluster_accesslog.yaml)
+
+```yaml
+---
 apiVersion: config.netease.com/v1alpha1
 kind: SlimeBoot
 metadata:
@@ -103,125 +139,47 @@ spec:
     tag: {{your_lazyload_tag}}
   module:
     - name: lazyload
+      enable: true
       fence:
-        enable: true
-        wormholePort: 
-          - "{{your_port}}" # replace to your application service ports, and extend the list in case of multi ports
-      metric:
-        prometheus:
-          address: {{prometheus_address}} # replace to your prometheus address
-          handlers:
-            destination:
-              query: |
-                sum(istio_requests_total{source_app="$source_app",reporter="destination"})by(destination_service)
-              type: Group
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
+      global:
+        misc:
+          globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
+          metricSourceType: accesslog # infrom the metric source
   component:
     globalSidecar:
       enable: true
-      type: namespaced
-      namespace:
-        - {{your_namespace}} # replace to your service's namespace, and extend the list in case of multi namespaces
+      type: cluster # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: pod # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        labels: # optional, used for sidecarInject.mode = pod, indicate the labels for sidecar auto inject 
+          {{your_istio_autoinject_labels}}
       resources:
         requests:
           cpu: 200m
           memory: 200Mi
         limits:
-          cpu: 200m
-          memory: 200Mi
+          cpu: 400m
+          memory: 400Mi
       image:
-        repository: {{your_sidecar_repo}}
-        tag: {{your_sidecar_tag}}           
-    pilot:
-      enable: true
-      resources:
-        requests:
-          cpu: 200m
-          memory: 200Mi
-        limits:
-          cpu: 200m
-          memory: 200Mi
-      image:
-        repository: {{your_pilot_repo}}
-        tag: {{your_pilot_tag}}
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
 ```
 
 
 
-2. make sure all components are running
+### cluster + prometheus
 
-```sh
-$ kubectl get po -n mesh-operator
-NAME                                    READY     STATUS    RESTARTS   AGE
-global-sidecar-pilot-796fb554d7-blbml   1/1       Running   0          27s
-lazyload-fbcd5dbd9-jvp2s                1/1       Running   0          27s
-slime-boot-68b6f88b7b-wwqnd             1/1       Running   0          39s
-```
+This mode deploys a global-sidecar application, in the namespace of the lazyload controller, defaulting to mesh-operator. The source of the metrics is Prometheus.
 
-```sh
-$ kubectl get po -n {{your_namespace}}
-NAME                              READY     STATUS    RESTARTS   AGE
-global-sidecar-785b58d4b4-fl8j4   1/1       Running   0          68s
-```
-
-3. enable lazyload
-
-Apply servicefence resource to enable lazyload.
+> [Full Example](./install/samples/lazyload/slimeboot_cluster_prometheus.yaml)
 
 ```yaml
-apiVersion: microservice.slime.io/v1alpha1
-kind: ServiceFence
-metadata:
-  name: {{your_svc}}
-  namespace: {{your_namespace}}
-spec:
-  enable: true
-```
-
-**Note**
-Because servicefence relies on global sidecar to temporarily handle traffic to "temporarily unknown dependent services", it is necessary to ensure that one of the following is in place.
-
-* If globalSidecar is in namespaced mode: the ns to be enabled or the ns where the svc is enabled is configured in the `namespace` of globalSidecar
-* If globalSidecar is in cluster mode: ok
-
-4. make sure sidecar has been generated
-   Execute `kubectl get sidecar {{svc name}} -oyaml`，you can see a sidecar is generated for the corresponding service， as follow：
-
-```yaml
-apiVersion: networking.istio.io/v1beta1
-kind: Sidecar
-metadata:
-  name: {{your_svc}}
-  namespace: {{your_ns}}
-  ownerReferences:
-  - apiVersion: microservice.slime.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: ServiceFence
-    name: {{your_svc}}
-spec:
-  egress:
-  - hosts:
-    - istio-system/*
-    - mesh-operator/*
-    - '*/global-sidecar.{your ns}.svc.cluster.local'
-  workloadSelector:
-    labels:
-      app: {{your_svc}}
-```
-
-
-
-### Use cluster unique global-sidecar
-
-> [Example](./install/samples/lazyload/slimeboot_lazyload_cluster_global_sidecar.yaml)
->
-> Instructions:
->
-> In k8s, the traffic of short domain access will only come from the same namespace, and cross-namespace access must carry namespace information. Cluster unique global-sidecar is often not under the same namespace with business service, so its envoy config lacks the configuration of short domain. Therefore, cluster unique global-sidecar cannot successfully forward access requests within the same namespace, resulting in timeout "HTTP/1.1 0 DC downstream_remote_disconnect" error.
->
-> So in this case, inter-application access should carry namespace information.
-
-```yaml
+---
 apiVersion: config.netease.com/v1alpha1
 kind: SlimeBoot
 metadata:
@@ -233,17 +191,19 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - fence:
-        enable: true
-        wormholePort:
-        - "{{your_port}}" # replace to your application service ports, and extend the list in case of multi ports
-      name: slime-fence
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
       global:
         misc:
-          global-sidecar-mode: cluster      
-      metric:
+          globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
+      metric: # indicate the metric source
         prometheus:
-          address: {{prometheus_address}} # replace to your prometheus address
+          address: {{your_prometheus_address}}
           handlers:
             destination:
               query: |
@@ -252,34 +212,34 @@ spec:
   component:
     globalSidecar:
       enable: true
-      type: cluster
+      type: cluster # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: pod # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        labels: # optional, used for sidecarInject.mode = pod, indicate the labels for sidecar auto inject 
+          {{your_istio_autoinject_labels}}
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
       image:
-        repository: {{your_sidecar_repo}}
-        tag: {{your_sidecar_tag}}      
-    pilot:
-      enable: true
-      image:
-        repository: {{your_pilot_repo}}
-        tag: {{your_pilot_tag}}     
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
 ```
 
 
 
-### Disable global-sidecar
+### namespace+accesslog
 
-In the ServiceMesh with allow_any enabled, the global-sidecar component can be omitted. Use the following configuration:
+This pattern deploys a global-sidecar application in each namespace where lazyload is intended to be used. Underwriting requests for each namespace are sent to the global-sidecar application under the same namespace. The source of the metrics is the global-sidecar's accesslog.
 
-> [Example](./install/samples/lazyload/slimeboot_lazyload_no_global_sidecar.yaml)
->
-> Instructions:
->
-> Not using the global-sidecar component may result in the first call not following the pre-defined routing rules. It may result in the underlying logic of istio (typically passthrough), then it come back to send request using clusterIP. VirtualService temporarily disabled.
->
-> Scenario:
->
-> Service A accesses service B, but service B's virtualservice directs the request for access to service B to service C. Since there is no global sidecar to handle this, the first request is transmitted by istio to service B via PassthroughCluster. What should have been a response from service C becomes a response from service B with an error. After first request, B adds to A's servicefence, then A senses that the request is directed to C by watching B's virtualservice. Later C adds to A's servicefence., and all requests after the first time will be successfully responded by C.
+> [Full Example](./install/samples/lazyload/slimeboot_namespace_accesslog.yaml)
 
 ```yaml
+---
 apiVersion: config.netease.com/v1alpha1
 kind: SlimeBoot
 metadata:
@@ -291,37 +251,109 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - fence:
-        enable: true
-        wormholePort:
-        - "{{your_port}}" # replace to your application service ports, and extend the list in case of multi ports
-      name: slime-fence
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
       global:
         misc:
-          global-sidecar-mode: no      
-      metric:
+          metricSourceType: accesslog # indicate the metric source
+  component:
+    globalSidecar:
+      enable: true
+      type: namespace # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: namespace # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        #labels: # optional, used for sidecarInject.mode = pod
+          #sidecar.istio.io/inject: "true"
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
+      image:
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
+```
+
+
+
+### namespace+prometheus
+
+This pattern deploys a global-sidecar application in each namespace where lazyload is intended to be enabled. Underwriting requests for each namespace are sent to the global-sidecar application under the same namespace. The source of the metrics is Prometheus.
+
+>[Full Example](./install/samples/lazyload/slimeboot_namespace_prometheus.yaml)
+
+```yaml
+---
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  image:
+    pullPolicy: Always
+    repository: docker.io/slimeio/slime-lazyload
+    tag: {{your_lazyload_tag}}
+  module:
+    - name: lazyload
+      enable: true
+      fence:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "{{your_port}}"
+        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
+          - {{your_namespace}}
+      metric: # indicate the metric source
         prometheus:
-          address: {{prometheus_address}} # replace to your prometheus address
+          address: http://prometheus.istio-system:9090
           handlers:
             destination:
               query: |
                 sum(istio_requests_total{source_app="$source_app",reporter="destination"})by(destination_service)
               type: Group
+  component:
+    globalSidecar:
+      enable: true
+      type: namespace # inform the slime-boot operator of the global-sidecar mode
+      sidecarInject:
+        enable: true # must be true
+        mode: namespace # if type = cluster, can only be "pod"; if type = namespace, can be "pod" or "namespace"
+        #labels: # optional, used for sidecarInject.mode = pod
+          #sidecar.istio.io/inject: "true"
+      resources:
+        requests:
+          cpu: 200m
+          memory: 200Mi
+        limits:
+          cpu: 400m
+          memory: 400Mi
+      image:
+        repository: docker.io/slimeio/slime-global-sidecar
+        tag: {{your_global-sidecar_tag}}
 ```
 
 
 
 
 
-## Introduction of other features
+
+
+## Introduction of features
 
 ### Enable lazyload based on accesslog
 
-Specifying the SlimeBoot CR resource `spec.module.global.misc.metric_source_type` equal to `accesslog` will use Accesslog to get the service  relationship, and equal to `prometheus` will use Prometheus.
+Specifying the SlimeBoot CR resource `spec.module.global.misc.metricSourceType` equal to `accesslog` will use Accesslog to get the service  relationship, and equal to `prometheus` will use Prometheus.
 
 Approximate process of obtaining service call relationships using Accesslog:
 
-- When slime-boot creates global-sidecar, it finds `metric_source_type: accesslog` and generates an additional configmap with static_resources containing the address information for the lazyload controller to process accesslog. The static_resources is then added to the global-sidecar configuration by an envoyfilter, so that the global-sidecar accesslog will be sent to the lazyload controller
+- When slime-boot creates global-sidecar, it finds `metricSourceType: accesslog` and generates an additional configmap with static_resources containing the address information for the lazyload controller to process accesslog. The static_resources is then added to the global-sidecar configuration by an envoyfilter, so that the global-sidecar accesslog will be sent to the lazyload controller
 - The global-sidecar generates an accesslog, containing information about the caller and callee services. Global-sidecar sends the information to the lazyload controller
 - The lazyload controller analyzes the accesslog and gets the new service call relationship
 
@@ -339,10 +371,10 @@ spec:
           - "9080"
       global:
         misc:
-          metric_source_type: accesslog
+          metricSourceType: accesslog
 ```
 
-[Full sample](./install/samples/lazyload/slimeboot_lazyload_accesslog.yaml)
+[Full sample](./install/samples/lazyload/slimeboot_cluster_accesslog.yaml)
 
 
 
@@ -465,6 +497,12 @@ foo: bar
 
 
 
+### Support for adding static service dependencies
+
+[To do]
+
+
+
 ### Logs output to local file and rotate
 
 slime logs are output to stdout by default, specifying `spec.module.global.log.logRotate` equal to `true` in the SlimeBoot CR resource will output the logs locally and start the log rotation, no longer to standard output.
@@ -573,7 +611,7 @@ spec:
           name: lazyload-storage
 ```
 
-[Full Example](./install/samples/lazyload/slimeboot_lazyload_logrotate.yaml)
+[Full Example](./install/samples/lazyload/slimeboot_logrotate.yaml)
 
 
 
@@ -604,15 +642,12 @@ Confirm all components are running.
 ```sh
 $ kubectl get slimeboot -n mesh-operator
 NAME       AGE
-lazyload   2m20s
+lazyload   12s
 $ kubectl get pod -n mesh-operator
-NAME                                    READY   STATUS             RESTARTS   AGE
-global-sidecar-pilot-7bfcdc55f6-977k2   1/1     Running            0          2m25s
-lazyload-b9646bbc4-ml5dr                1/1     Running            0          2m25s
-slime-boot-7b474c6d47-n4c9k             1/1     Running            0          4m55s
-$ kubectl get po -n default
 NAME                              READY   STATUS    RESTARTS   AGE
-global-sidecar-59f4c5f989-ccjjg   1/1     Running   0          3m9s
+global-sidecar-7dd48b65c8-gc7g4   2/2     Running   0          18s
+lazyload-85987bbd4b-djshs         1/1     Running   0          18s
+slime-boot-6f778b75cd-4v675       1/1     Running   0          26s
 ```
 
 
@@ -632,7 +667,6 @@ Confirm all pods are running.
 $ kubectl get po -n default
 NAME                              READY   STATUS    RESTARTS   AGE
 details-v1-79f774bdb9-6vzj6       2/2     Running   0          60s
-global-sidecar-59f4c5f989-ccjjg   1/1     Running   0          5m12s
 productpage-v1-6b746f74dc-vkfr7   2/2     Running   0          59s
 ratings-v1-b6994bb9-klg48         2/2     Running   0          59s
 reviews-v1-545db77b95-z5ql9       2/2     Running   0          59s
@@ -648,11 +682,21 @@ You can also create gateway and visit productpage from outside, like what shows 
 
 ### Enable Lazyload
 
-Create lazyload for productpage.
+Create ServiceFence for productpage. Two ways:
+
+- Create ServiceFence manually
 
 ```sh
 $ kubectl apply -f "https://raw.githubusercontent.com/slime-io/lazyload/$latest_tag/install/samples/lazyload/servicefence_productpage.yaml"
 ```
+
+- Update service to automatically create ServiceFence
+
+```sh
+$ kubectl label service productpage -n default slime.io/serviceFenced=true
+```
+
+
 
 Confirm servicefence and sidecar already exist.
 
@@ -663,11 +707,26 @@ productpage   12s
 $ kubectl get sidecar -n default
 NAME          AGE
 productpage   22s
+$ kubectl get servicefence productpage -n default -oyaml
+apiVersion: microservice.slime.io/v1alpha1
+kind: ServiceFence
+metadata:
+  creationTimestamp: "2021-12-23T06:21:14Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/created-by: fence-controller
+  name: productpage
+  namespace: default
+  resourceVersion: "10662886"
+  uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+spec:
+  enable: true
+status: {}
 $ kubectl get sidecar productpage -n default -oyaml
 apiVersion: networking.istio.io/v1beta1
 kind: Sidecar
 metadata:
-  creationTimestamp: "2021-08-04T03:54:35Z"
+  creationTimestamp: "2021-12-23T06:21:14Z"
   generation: 1
   name: productpage
   namespace: default
@@ -677,15 +736,14 @@ metadata:
     controller: true
     kind: ServiceFence
     name: productpage
-    uid: d36e4be7-d66c-4f77-a9ff-14a4bf4641e6
-  resourceVersion: "324118"
-  uid: ec283a14-8746-42d3-87d1-0ee4538f0ac0
+    uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+  resourceVersion: "10662887"
+  uid: 85f9dc11-6d83-4b84-8d1b-14bd031cc57b
 spec:
   egress:
   - hosts:
     - istio-system/*
     - mesh-operator/*
-    - '*/global-sidecar.default.svc.cluster.local'
   workloadSelector:
     labels:
       app: productpage
@@ -698,20 +756,57 @@ spec:
 Visit the productpage website, and use `kubectl logs -f productpage-xxx -c istio-proxy -n default` to observe the access log of productpage.
 
 ```
-[2021-08-06T06:04:36.912Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 43 43 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "48257260-1f5f-92fa-a18f-ff8e2b128487" "details:9080" "172.17.0.17:9080" outbound|9080||global-sidecar.default.svc.cluster.local 172.17.0.11:45422 10.101.207.55:9080 172.17.0.11:56376 - -
-[2021-08-06T06:04:36.992Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 375 1342 1342 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "48257260-1f5f-92fa-a18f-ff8e2b128487" "reviews:9080" "172.17.0.17:9080" outbound|9080||global-sidecar.default.svc.cluster.local 172.17.0.11:45428 10.106.126.147:9080 172.17.0.11:41130 - -
+[2021-12-23T06:24:55.527Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 12 12 "-" "curl/7.52.1" "7ec25152-ca8e-923b-a736-49838ce316f4" "details:9080" "172.17.0.10:80" outbound|9080||global-sidecar.mesh-operator.svc.cluster.local 172.17.0.11:45194 10.102.66.227:9080 172.17.0.11:40210 - -
+
+[2021-12-23T06:24:55.552Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 295 30 29 "-" "curl/7.52.1" "7ec25152-ca8e-923b-a736-49838ce316f4" "reviews:9080" "172.17.0.10:80" outbound|9080||global-sidecar.mesh-operator.svc.cluster.local 172.17.0.11:45202 10.104.97.115:9080 172.17.0.11:40880 - -
+
+[2021-12-23T06:24:55.490Z] "GET /productpage HTTP/1.1" 200 - via_upstream - "-" 0 4183 93 93 "-" "curl/7.52.1" "7ec25152-ca8e-923b-a736-49838ce316f4" "productpage:9080" "172.17.0.11:9080" inbound|9080|| 127.0.0.6:48621 172.17.0.11:9080 172.17.0.7:41458 outbound_.9080_._.productpage.default.svc.cluster.local default
 ```
 
-It is clearly that the banckend of productpage is global-sidecar.
+It is clearly that the banckend of productpage is global-sidecar.mesh-operator.svc.cluster.local.
 
-Now we get the sidecar yaml.
+
+
+Observe servicefence productpage.
+
+```sh
+$ kubectl get servicefence productpage -n default -oyaml
+apiVersion: microservice.slime.io/v1alpha1
+kind: ServiceFence
+metadata:
+  creationTimestamp: "2021-12-23T06:21:14Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/created-by: fence-controller
+  name: productpage
+  namespace: default
+  resourceVersion: "10663136"
+  uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+spec:
+  enable: true
+status:
+  domains:
+    details.default.svc.cluster.local:
+      hosts:
+      - details.default.svc.cluster.local
+    reviews.default.svc.cluster.local:
+      hosts:
+      - reviews.default.svc.cluster.local
+  metricStatus:
+    '{destination_service="details.default.svc.cluster.local"}': "1"
+    '{destination_service="reviews.default.svc.cluster.local"}': "1"
+```
+
+
+
+Observe sidecar productpage.
 
 ```YAML
-$ kubectl get sidecar productpage -oyaml
+$ kubectl get sidecar productpage -n default -oyaml
 apiVersion: networking.istio.io/v1beta1
 kind: Sidecar
 metadata:
-  creationTimestamp: "2021-08-06T03:23:05Z"
+  creationTimestamp: "2021-12-23T06:21:14Z"
   generation: 2
   name: productpage
   namespace: default
@@ -721,9 +816,9 @@ metadata:
     controller: true
     kind: ServiceFence
     name: productpage
-    uid: 27853fe0-01b3-418f-a785-6e49db0d201a
-  resourceVersion: "498810"
-  uid: e923e426-f0f0-429a-a447-c6102f334904
+    uid: f21e7d2b-4ab3-4de0-9b3d-131b6143d9db
+  resourceVersion: "10663141"
+  uid: 85f9dc11-6d83-4b84-8d1b-14bd031cc57b
 spec:
   egress:
   - hosts:
@@ -731,7 +826,6 @@ spec:
     - '*/reviews.default.svc.cluster.local'
     - istio-system/*
     - mesh-operator/*
-    - '*/global-sidecar.default.svc.cluster.local'
   workloadSelector:
     labels:
       app: productpage
@@ -746,8 +840,11 @@ Details and reviews are already added into sidecar!
 Visit the productpage website again, and use `kubectl logs -f productpage-xxx -c istio-proxy -n default` to observe the access log of productpage.
 
 ```
-[2021-08-06T06:05:47.068Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 46 46 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "1c1c8e23-24d3-956e-aec0-e4bcff8df251" "details:9080" "172.17.0.6:9080" outbound|9080||details.default.svc.cluster.local 172.17.0.11:58522 10.101.207.55:9080 172.17.0.11:57528 - default
-[2021-08-06T06:05:47.160Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 379 1559 1558 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36" "1c1c8e23-24d3-956e-aec0-e4bcff8df251" "reviews:9080" "172.17.0.10:9080" outbound|9080||reviews.default.svc.cluster.local 172.17.0.11:60104 10.106.126.147:9080 172.17.0.11:42280 - default
+[2021-12-23T06:26:47.700Z] "GET /details/0 HTTP/1.1" 200 - via_upstream - "-" 0 178 13 12 "-" "curl/7.52.1" "899e918c-e44c-9dc2-9629-d8db191af972" "details:9080" "172.17.0.13:9080" outbound|9080||details.default.svc.cluster.local 172.17.0.11:50020 10.102.66.227:9080 172.17.0.11:42180 - default
+
+[2021-12-23T06:26:47.718Z] "GET /reviews/0 HTTP/1.1" 200 - via_upstream - "-" 0 375 78 77 "-" "curl/7.52.1" "899e918c-e44c-9dc2-9629-d8db191af972" "reviews:9080" "172.17.0.16:9080" outbound|9080||reviews.default.svc.cluster.local 172.17.0.11:58986 10.104.97.115:9080 172.17.0.11:42846 - default
+
+[2021-12-23T06:26:47.690Z] "GET /productpage HTTP/1.1" 200 - via_upstream - "-" 0 5179 122 121 "-" "curl/7.52.1" "899e918c-e44c-9dc2-9629-d8db191af972" "productpage:9080" "172.17.0.11:9080" inbound|9080|| 127.0.0.6:51799 172.17.0.11:9080 172.17.0.7:41458 outbound_.9080_._.productpage.default.svc.cluster.local default
 ```
 
 The backends are details and reviews now.
@@ -798,19 +895,39 @@ $ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/slime-io/lazyload
 
 ## FAQ
 
-### Meaning of global-sidecar-pilot?
+### Istio versions supported?
 
-Because the role of global-sidecar is different from normal sidecar, it needs some custom logic, such as the bottom envoyfilter does not take effect for global-sidecar or it will dead-loop, etc. global-sidecar does not directly use the full configuration of the original pilot of the cluster. The global-sidecar-pilot will get the full configuration from the original pilot of the cluster, then fine-tune it and push it to the global-sidecar. the existing global-sidecar-pilot is based on istiod 1.7.
-
-Note: In order to reduce learning costs and enhance compatibility, we are considering removing the global-sidecar-pilot, when there will no longer be a customized pilot, fully compatible with the community version, and expect to implement this feature in the next major release.
+Istio 1.8 onwards is supported, see [A note on the incompatibility of lazyload with some versions of istio](https://github.com/slime-io/lazyload/issues/26) for a detailed compatibility note.
 
 
 
-### global sidecar does not start properly?
+### Why is it necessary to specify a service port?
 
-Global sidecar starts with an error `Internal:Error adding/updating listener(s) 0.0.0.0_15021: cannot bind '0.0.0.0:15021': Address already in use`. 
+No service port information is specified, as usually when lazyload is enabled, the default content of the sidecar only contains service information for istio-system and mesh-operator, and some specific ports usually have no services exposed. Due to Istio's mechanism, only listener's that are meaninglessly routed in the pocket will be removed, and there is no guarantee that a placeholder listener will exist.
 
-This error is usually caused by port conflict. The global-sidecar is a sidecar running in gateway mode, which binds to the real port. Specifically, istio-ingressgateway is using port 15021, which will cause the lds update of global-sidecar to fail, and can be solved by changing port 15021 of ingressgateway to another value.
+For example, if the service in bookinfo is exposed on port `9080`, and lazyload is enabled for the productpage service, the productpage `9080` listener will be removed. When you access `details:9080` after that, without the listener, you will go directly to the Passthrough logic and will not be able to go to the global-sidecar, and you will not be able to fetch the service dependencies.
 
-Note: This problem is currently solved by port planning, and will be freed from this limitation in the next major release.
+
+
+### Why is it necessary to specify a list of namespaces for lazyload?
+
+Due to the large number of short domain access scenarios, different namespace information needs to be replenished in different namespaces. So lazyload will create separate envoyfilters under these specified namespaces, supplemented with the appropriate namespace information.
+
+
+
+### ~~Meaning of global-sidecar-pilot?~~ (component obsolete)
+
+~~Because the role of global-sidecar is different from normal sidecar, it needs some custom logic, such as the bottom envoyfilter does not take effect for global-sidecar or it will dead-loop, etc. global-sidecar does not directly use the full configuration of the original pilot of the cluster. The global-sidecar-pilot will get the full configuration from the original pilot of the cluster, then fine-tune it and push it to the global-sidecar. the existing global-sidecar-pilot is based on istiod 1.7.~~
+
+~~Note: In order to reduce learning costs and enhance compatibility, we are considering removing the global-sidecar-pilot, when there will no longer be a customized pilot, fully compatible with the community version, and expect to implement this feature in the next major release.~~
+
+
+
+### ~~global sidecar does not start properly?~~ (Solved)
+
+~~Global sidecar starts with an error `Internal:Error adding/updating listener(s) 0.0.0.0_15021: cannot bind '0.0.0.0:15021': Address already in use`.~~ 
+
+~~This error is usually caused by port conflict. The global-sidecar is a sidecar running in gateway mode, which binds to the real port. Specifically, istio-ingressgateway is using port 15021, which will cause the lds update of global-sidecar to fail, and can be solved by changing port 15021 of ingressgateway to another value.~~
+
+~~Note: This problem is currently solved by port planning, and will be freed from this limitation in the next major release.~~
 

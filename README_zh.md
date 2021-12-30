@@ -4,7 +4,7 @@
   - [思路](#思路)
   - [架构](#架构)
   - [安装和使用](#安装和使用)
-  - [其他特性介绍](#其他特性介绍)
+  - [特性介绍](#特性介绍)
   - [完整使用样例](#完整使用样例)
   - [E2E测试介绍](#e2e测试介绍)
   - [ServiceFence说明](#servicefence说明)
@@ -17,12 +17,14 @@
 
 ## 特点
 
-1. 兜底逻辑简单，与服务数量无关，无性能问题
-2. 兜底转发支持所有流量治理能力
-3. 适用存在集群外服务的场景
-4. 支持手动、自动等多种启用方式
-5. 支持服务级、命名空间级等多种启用范围
-6. 支持Prometheus和Accesslog等多种指标获取方式
+1. 支持1.8+的Istio版本，无侵入性
+2. 兜底转发过程支持Istio所有流量治理能力
+3. 兜底逻辑简单，与服务数量无关，无性能问题
+4. 支持Namespace，Service等维度灵活启用懒加载
+5. 支持Accesslog和Prometheus等多种动态服务依赖获取方式
+6. 支持添加静态服务依赖关系，动静依赖关系结合，功能全面
+
+
 
 
 
@@ -30,17 +32,15 @@
 
 懒加载即按需加载。
 
-没有懒加载时，服务数量过多时，Envoy配置量太大，新上的应用长时间处于Not Ready状态。为应用配置CR Sidecar，并自动的获取服务依赖关系，更新Sidecar可以解决此问题。
+没有懒加载时，服务数量过多时，Envoy配置量太大，新上的应用长时间处于Not Ready状态。为应用配置Custom Resource `Sidecar`，并自动的获取服务依赖关系，更新Sidecar可以解决此问题。
 
 
 
 ## 思路
 
-引入另一个Sidecar，即global-sidecar。它是一个全局共享的Sidecar，拥有全量的配置和服务发现信息。兜底路由替换为指向global-sidecar的新兜底路由。
+引入一个服务`global-sidecar`，它是一个兜底应用。它会被集群的Istiod注入sidecar容器。该sidecar容器拥有全量的配置和服务发现信息。兜底路由替换为指向global-sidecar。
 
-出于global-sidecar的兜底逻辑不能继续指向自身导致死循环等考虑，global-sidecar需要一些定制化配置，因此引入global-sidecar-pilot。global-sidecar-pilot会基于集群中的pilot配置生成专用于global-sidecar的配置。
-
-引入新的CR资源ServiceFence。详见[ServiceFence说明](#ServiceFence说明)
+引入新的Custom Resource Definition `ServiceFence`。详见[ServiceFence说明](#ServiceFence说明)
 
 最后，将控制逻辑包含到lazyload controller组件中。它会为启用懒加载的服务创建ServiceFence和Sidecar，根据配置获取到服务调用关系，更新ServiceFence和Sidecar。
 
@@ -48,11 +48,9 @@
 
 ## 架构
 
+整个模块由Lazyload controller和global-sidecar两部分组成。Lazyload controller无需注入sidecar，global-sidecar则需要注入。
 
-
-<img src="./media/lazyload-architecture-2021-10-19.png" style="zoom:80%;" />
-
-
+<img src="./media/lazyload-architecture-20211222_zh.png" style="zoom:80%;" />
 
 
 
@@ -62,24 +60,32 @@
 
 ## 安装和使用
 
-lazyload目前有三种使用模式：
+1. 根据global-sidecar的部署模式不同，该模块目前分为两种模式：
 
-- 使用namespace级别的global-sidecar
-- 使用集群唯一的global-sidecar   
-- 不使用global-sidecar组件
+   - Cluster模式：使用cluster级别的global-sidecar：集群唯一global-sidecar应用
+
+   - Namespace模式：使用namespace级别的global-sidecar：每个使用懒加载的namespace下一个global-sidecar应用
+
+2. 根据服务依赖关系指标来源不同，该模块分为两种模式：
+
+   - Accesslog模式：global-sidecar通过入流量拦截，生成包含服务依赖关系的accesslog
+   - Prometheus模式：业务应用在完成访问后，生成metric，上报prometheus。此种模式需要集群对接Prometheus
+
+总的来说，Lazyload模块有4种使用模式，较为推荐Cluster+Accesslog模式。
 
 详见 [安装和使用](./lazyload_tutorials_zh.md#%E5%AE%89%E8%A3%85%E5%92%8C%E4%BD%BF%E7%94%A8)
 
 
 
-## 其他特性介绍
+## 特性介绍
 
 - 基于Accesslog开启懒加载
-- ServiceFence支持手动创建和基于namespace/service label自动创建
+- 基于namespace/service label自动生成ServiceFence
 - 支持自定义兜底流量分派
+- 支持添加静态服务依赖关系
 - 日志输出到本地并轮转
 
-详见 [其他特性介绍](./lazyload_tutorials_zh.md#%E5%85%B6%E4%BB%96%E7%89%B9%E6%80%A7%E4%BB%8B%E7%BB%8D)
+详见 [特性介绍](./lazyload_tutorials_zh.md#%E7%89%B9%E6%80%A7%E4%BB%8B%E7%BB%8D)
 
 
 

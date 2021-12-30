@@ -17,7 +17,7 @@ spec:
           - "9080"
       global:
         misc:
-          metric_source_type: accesslog
+          metricSourceType: accesslog
       metric:
         prometheus:
           address: http://prometheus.istio-system:9090
