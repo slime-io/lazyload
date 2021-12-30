@@ -17,6 +17,17 @@ const (
 	HeaderOrigDest = "Slime-Orig-Dest"
 )
 
+type HealthzProxy struct {
+}
+
+func (p *HealthzProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// health check
+	if req.RequestURI == "/healthz/live" || req.RequestURI == "/healthz/ready" {
+		w.Write([]byte("Healthy!"))
+		return
+	}
+}
+
 type Proxy struct {
 }
 
@@ -62,6 +73,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
+	log.Infof("received request, reqHost: %s", reqHost)
 
 	if req.URL.Scheme == "" {
 		req.URL.Scheme = "http"
