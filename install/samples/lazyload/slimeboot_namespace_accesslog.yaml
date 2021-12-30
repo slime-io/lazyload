@@ -8,7 +8,7 @@ spec:
   image:
     pullPolicy: Always
     repository: docker.io/slimeio/slime-lazyload
-    tag: master-88a49f0
+    tag: v0.2.0-7ca7f04
   module:
     - name: lazyload
       enable: true
@@ -45,4 +45,4 @@ spec:
           memory: 400Mi
       image:
         repository: docker.io/slimeio/slime-global-sidecar
-        tag: master-11af379
+        tag: v0.2.0-7ca7f04
