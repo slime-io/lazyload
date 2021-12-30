@@ -14,7 +14,7 @@ fi
 
 crds_url="https://raw.githubusercontent.com/slime-io/lazyload/$tag_or_commit/install/init/crds.yaml"
 deployment_slimeboot_url="https://raw.githubusercontent.com/slime-io/lazyload/$tag_or_commit/install/init/deployment_slime-boot.yaml"
-slimeboot_lazyload_url="https://raw.githubusercontent.com/slime-io/lazyload/$tag_or_commit/install/samples/lazyload/slimeboot_lazyload.yaml"
+slimeboot_lazyload_url="https://raw.githubusercontent.com/slime-io/lazyload/$tag_or_commit/install/samples/lazyload/slimeboot_cluster_accesslog.yaml"
 
 for i in $(kubectl get ns --no-headers |awk '{print $1}');do kubectl delete servicefence -n $i --all;done
 kubectl delete -f "${slimeboot_lazyload_url}"
