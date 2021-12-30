@@ -298,8 +298,8 @@ github.com/sergi/go-diff v1.0.0/go.mod h1:0CfEIISq7TuYL3j771MWULgwwjU+GofnZX9QAm
 github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
 github.com/sirupsen/logrus v1.4.2 h1:SPIRibHv4MatM3XXNO2BJeFLZwZ2LvZgfQ5+UNI2im4=
 github.com/sirupsen/logrus v1.4.2/go.mod h1:tLMulIdttU9McNUspp0xgXVQah82FyeX6MwdIuYE2rE=
-github.com/slime-io/slime/framework v0.3.7 h1:RrZsvMVGC4nSrRWGJZWNchkDTXlFrnv+vFlF4u00814=
-github.com/slime-io/slime/framework v0.3.7/go.mod h1:/oF27Hn6PNzYrz31xzvfz/XBEd360TGo2a4kKVBYuO8=
+github.com/slime-io/slime/framework v0.3.8 h1:fS/fnVVKc2THVzmI+CBKHcJNiIIJGyBrkjqAL/83r7U=
+github.com/slime-io/slime/framework v0.3.8/go.mod h1:/oF27Hn6PNzYrz31xzvfz/XBEd360TGo2a4kKVBYuO8=
 github.com/soheilhy/cmux v0.1.4/go.mod h1:IM3LyeVVIOuxMH7sFAkER9+bJ4dT7Ms6E4xg4kGIyLM=
 github.com/spf13/afero v1.1.2/go.mod h1:j4pytiNVoe2o6bmDsKpLACNPDBIoEAkihy7loJ1B0CQ=
 github.com/spf13/afero v1.2.2/go.mod h1:9ZxEEn6pIJ8Rxe320qSDBk6AsU0r9pR7Q4OcevTdifk=
