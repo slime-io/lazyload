@@ -10,6 +10,9 @@
     - [Automatic ServiceFence generation based on namespace/service label](#automatic-servicefence-generation-based-on-namespaceservice-label)
     - [Custom undefined traffic dispatch](#custom-undefined-traffic-dispatch)
     - [Support for adding static service dependencies](#support-for-adding-static-service-dependencies)
+      - [Dependency on specific services](#dependency-on-specific-services)
+      - [Dependency on all services in  specific namespaces](#dependency-on-all-services-in--specific-namespaces)
+      - [Dependency on all services with specific labels](#dependency-on-all-services-with-specific-labels)
     - [Logs output to local file and rotate](#logs-output-to-local-file-and-rotate)
       - [Creating Storage Volumes](#creating-storage-volumes)
       - [Declaring mount information in SlimeBoot](#declaring-mount-information-in-slimeboot)
@@ -499,7 +502,92 @@ foo: bar
 
 ### Support for adding static service dependencies
 
-[To do]
+In addition to updating service dependencies from the slime metric based on dynamic metrics, Lazyload also supports adding static service dependencies via `serviceFence.spec`. Three breakdown scenarios are supported: dependency on specific services, dependency on all services in  specific namespaces, dependency on all services with specific labels.
+
+It is worth noting that static service dependencies, like dynamic service dependencies, also support the determination of the real backend of a service based on VirtualService rules and automatically extend the scope of Fence. Details at [ServiceFence Instruction](./README.md#ServiceFence-Instruction)
+
+
+
+
+
+#### Dependency on specific services
+
+For scenarios where a lazyload enabled service statically depends on one or more other services, the configuration can be added directly to the sidecar crd at initialization time.
+
+In the following example, a static dependency on the `reviews.default` service is added for a lazyload enabled service.
+
+```yaml
+# servicefence
+spec:
+  enable: true
+  host:
+    reviews.default.svc.cluster.local: # static dependenct of reviews.default service
+      stable:
+
+# related sidecar
+spec:
+  egress:
+  - hosts:
+    - '*/reviews.default.svc.cluster.local'
+    - istio-system/*
+    - mesh-operator/*
+```
+
+
+
+#### Dependency on all services in  specific namespaces
+
+For scenarios where a lazyload enabled service statically depends on all services in one or more other namespaces, the configuration can be added directly to the sidecar crd at initialization time.
+
+In the following example, a static dependency on all services in the `test` namespace is added for a lazyload enabled service.
+
+```yaml
+# servicefence
+spec:
+  enable: true
+  host:
+    test/*: {} # static dependency of all services in test namespace
+
+# related sidecar
+spec:
+  egress:
+  - hosts:
+    - test/*
+    - istio-system/*
+    - mesh-operator/*
+```
+
+
+
+#### Dependency on all services with specific labels
+
+For scenarios where a lazyload enabled service has static dependencies on all services with a label or multiple labels, the configuration can be added directly to the sidecar crd at initialization time.
+
+In the example below, static dependencies are added for all services with `app=details` and for all services with `app=reviews, group=default` for the lazyloading enabled service.
+
+```yaml
+# servicefence
+spec:
+  enable: true
+  labelSelector: # Match service label, multiple selectors are 'or' relationship
+    - selector:
+        app: details
+    - selector: # labels in one selector are 'and' relationship
+        app: reviews
+        group: default
+
+# related sidecar
+spec:
+  egress:
+  - hosts:
+    - '*/details.default.svc.cluster.local' # with label "app=details"
+    - '*/details.test.svc.cluster.local' # with label "app=details"
+    - '*/reviews.default.svc.cluster.local' # with label "app=details" and "group=default"
+    - istio-system/*
+    - mesh-operator/*
+```
+
+
 
 
 
