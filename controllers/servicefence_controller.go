@@ -345,8 +345,7 @@ func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence) m
 
 	domains := make(map[string]*lazyloadv1alpha1.Destinations)
 
-	addDomainsWithHost(domains, sf)
-	addDomainsWithNamespaceSelector(domains, sf, r.nsSvcCache)
+	addDomainsWithHost(domains, sf, r.nsSvcCache)
 	addDomainsWithLabelSelector(domains, sf, r.labelSvcCache)
 	addDomainsWithMetricStatus(domains, sf)
 
@@ -354,7 +353,8 @@ func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence) m
 }
 
 // update domains with spec.host
-func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
+func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence, nsSvcCache *NsSvcCache) {
+
 	checkStatus := func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status {
 		switch {
 		case strategy.Stable != nil:
@@ -372,74 +372,99 @@ func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *l
 		}
 		return lazyloadv1alpha1.Destinations_ACTIVE
 	}
-	now := time.Now().Unix()
 
 	for h, strategy := range sf.Spec.Host {
 
-		fullHost := h
-		subDomains := strings.Split(h, ".")
-		switch len(subDomains) {
-		// full service name, like "reviews.default.svc.cluster.local", needs no action
-		case 5:
-		// short service name without namespace, like "reviews", needs to add namespace of servicefence and "svc.cluster.local"
-		case 1:
-			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], sf.Namespace)
-		// short service name with namespace, like "reviews.default", needs to add "svc.cluster.local"
-		case 2:
-			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], subDomains[1])
-		default:
-			log.Errorf("%s is invalid host, skip", h)
-			continue
+		if strings.HasSuffix(h, "/*") {
+			// handle namespace level host, like 'default/*'
+			handleNsHost(h, domains, nsSvcCache)
+		} else {
+			// handle service level host, like 'a.default.svc.cluster.local' or 'a' or 'a.default'
+			handleSvcHost(h, strategy, checkStatus, domains, sf)
 		}
+
+	}
+}
+
+func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, nsSvcCache *NsSvcCache) {
+	hostParts := strings.Split(h, "/")
+	if len(hostParts) != 2 {
+		log.Errorf("%s is invalid host, skip", h)
+		return
+	}
+
+	nsSvcCache.RLock()
+	defer nsSvcCache.RUnlock()
+
+	svcs := nsSvcCache.Data[hostParts[0]]
+	var allHost []string
+	for svc := range svcs {
+		svcParts := strings.Split(svc, "/")
+		fullHost := fmt.Sprintf("%s.%s.svc.cluster.local", svcParts[1], svcParts[0])
 		if !isValidHost(fullHost) {
 			continue
 		}
 		if domains[fullHost] != nil {
 			continue
 		}
-
-		allHost := []string{fullHost}
+		// service relates to other services
 		if hs := getDestination(fullHost); len(hs) > 0 {
+			for i := 0; i < len(hs); {
+				hParts := strings.Split(hs[i], ".")
+				// ignore destSvc that in the same namespace
+				if hParts[1] == hostParts[0] {
+					hs[i], hs[len(hs)-1] = hs[len(hs)-1], hs[i]
+					hs = hs[:len(hs)-1]
+				} else {
+					i++
+				}
+			}
+
 			allHost = append(allHost, hs...)
 		}
-
-		domains[fullHost] = &lazyloadv1alpha1.Destinations{
-			Hosts:  allHost,
-			Status: checkStatus(now, strategy),
-		}
+	}
+	domains[h] = &lazyloadv1alpha1.Destinations{
+		Hosts:  allHost,
+		Status: lazyloadv1alpha1.Destinations_ACTIVE,
 	}
 }
 
-// update domains with spec.namespaceSelector
-func addDomainsWithNamespaceSelector(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
-	nsSvcCache *NsSvcCache) {
+func handleSvcHost(h string, strategy *lazyloadv1alpha1.RecyclingStrategy,
+	checkStatus func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status,
+	domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
 
-	nsSvcCache.RLock()
-	defer nsSvcCache.RUnlock()
+	now := time.Now().Unix()
 
-	for _, ns := range sf.Spec.NamespaceSelector {
-		svcs, ok := nsSvcCache.Data[ns]
-		if !ok {
-			continue
-		}
-		for svc := range svcs {
-			subdomains := strings.Split(svc, "/")
-			fullHost := fmt.Sprintf("%s.%s.svc.cluster.local", subdomains[1], subdomains[0])
-			if !isValidHost(fullHost) {
-				continue
-			}
-			if domains[fullHost] != nil {
-				continue
-			}
-			allHost := []string{fullHost}
-			if hs := getDestination(fullHost); len(hs) > 0 {
-				allHost = append(allHost, hs...)
-			}
-			domains[fullHost] = &lazyloadv1alpha1.Destinations{
-				Hosts:  allHost,
-				Status: lazyloadv1alpha1.Destinations_ACTIVE,
-			}
-		}
+	fullHost := h
+	hostParts := strings.Split(h, ".")
+	switch len(hostParts) {
+	// full service name, like "reviews.default.svc.cluster.local", needs no action
+	case 5:
+	// short service name without namespace, like "reviews", needs to add namespace of servicefence and "svc.cluster.local"
+	case 1:
+		fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", hostParts[0], sf.Namespace)
+	// short service name with namespace, like "reviews.default", needs to add "svc.cluster.local"
+	case 2:
+		fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", hostParts[0], hostParts[1])
+	default:
+		log.Errorf("%s is invalid host, skip", h)
+		return
+	}
+	if !isValidHost(fullHost) {
+		return
+	}
+	if domains[fullHost] != nil {
+		return
+	}
+
+	allHost := []string{fullHost}
+	if hs := getDestination(fullHost); len(hs) > 0 {
+		allHost = append(allHost, hs...)
+	}
+
+	domains[fullHost] = &lazyloadv1alpha1.Destinations{
+		Hosts:  allHost,
+		Status: checkStatus(now, strategy),
 	}
 }
 
@@ -569,14 +594,14 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 		hosts = append(hosts, ns+"/*")
 	}
 
-	for _, ns := range sf.Spec.NamespaceSelector {
-		if !r.isDefaultAddNs(ns) {
-			hosts = append(hosts, ns+"/*")
-		}
-	}
-
-	for _, v := range sf.Status.Domains {
+	for k, v := range sf.Status.Domains {
 		if v.Status == lazyloadv1alpha1.Destinations_ACTIVE || v.Status == lazyloadv1alpha1.Destinations_EXPIREWAIT {
+			if strings.HasSuffix(k, "/*") {
+				if !r.isDefaultAddNs(k) {
+					hosts = append(hosts, k)
+				}
+			}
+
 			for _, h := range v.Hosts {
 				hosts = append(hosts, "*/"+h)
 			}
@@ -586,8 +611,19 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 	// check whether using namespace global-sidecar
 	// if so, init config of sidecar will adds */global-sidecar.${svf.ns}.svc.cluster.local
 	if env.Config.Global.Misc["globalSidecarMode"] == "namespace" {
-		hosts = append(hosts, fmt.Sprintf("*/global-sidecar.%s.svc.cluster.local", sf.Namespace))
+		hosts = append(hosts, fmt.Sprintf("./global-sidecar.%s.svc.cluster.local", sf.Namespace))
 	}
+
+	// remove duplicated hosts
+	noDupHosts := make([]string, 0, len(hosts))
+	temp := map[string]struct{}{}
+	for _, item := range hosts {
+		if _, ok := temp[item]; !ok {
+			temp[item] = struct{}{}
+			noDupHosts = append(noDupHosts, item)
+		}
+	}
+	hosts = noDupHosts
 
 	// sort hosts so that it follows the Equals semantics
 	sort.Strings(hosts)
