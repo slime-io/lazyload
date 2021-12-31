@@ -37,7 +37,7 @@ When there are too many services in cluster, envoy configuration is too much, an
 
 Introduce a service `global-sidecar`, which is used for request last matching. It will be injected sidecar container by Istiod. with a full configuration and service discovery information. The pass through route is replaced with a new one to the global-sidecar.
 
-Bring new Custom Resource `ServiceFence`. Details at [ServiceFence Instruction](#ServiceFence Instruction)
+Bring new Custom Resource `ServiceFence`. Details at [ServiceFence Instruction](#ServiceFence-Instruction)
 
 Finally, the control logic is included in the lazyload controller component. It will create ServiceFence and Sidecar for the lazyload enabled services, and update ServiceFence and Sidecar based on the service invocation relationship obtained from the configuration.
 

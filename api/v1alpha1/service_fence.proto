@@ -83,8 +83,9 @@ message Timestamp {
 //   spec:
 //    enable: true
 //    host:
-//      reviews.default.svc.cluster.local: # stable dependency of reviews.default service
+//      reviews.default.svc.cluster.local: # static dependency of reviews.default service
 //        stable:
+//      test/*: {} # static dependency of all services in namespace 'test'
 //    namespaceSelector: # Match namespace names, multiple namespaces are 'or' relations, static dependency
 //      - foo
 //      - bar

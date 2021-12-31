@@ -10,6 +10,9 @@
     - [基于namespace/service label自动生成ServiceFence](#基于namespaceservice-label自动生成servicefence)
     - [自定义兜底流量分派](#自定义兜底流量分派)
     - [静态服务依赖关系添加](#静态服务依赖关系添加)
+      - [依赖某个服务](#依赖某个服务)
+      - [依赖某个namespace所有服务](#依赖某个namespace所有服务)
+      - [依赖具有某个label的所有服务](#依赖具有某个label的所有服务)
     - [日志输出到本地并轮转](#日志输出到本地并轮转)
       - [创建存储卷](#创建存储卷)
       - [在SlimeBoot中声明挂载信息](#在slimeboot中声明挂载信息)
@@ -489,9 +492,96 @@ foo: bar
 
 
 
+
+
 ### 静态服务依赖关系添加
 
-[用法待补充]
+懒加载除了从slime metric处根据动态指标更新服务依赖关系，还支持通过`serviceFence.spec`添加静态服务依赖关系。支持三种细分场景：依赖某个服务、依赖某个namespace所有服务、依赖具有某个label的所有服务。
+
+值得注意的是，静态服务依赖关系与动态服务依赖关系一样，支持根据VirtualService规则判断服务的真实后端，并自动扩大Fence的范围。详见[ServiceFence说明](./README_zh.md#ServiceFence%E8%AF%B4%E6%98%8E)
+
+
+
+
+
+#### 依赖某个服务
+
+适用于启用懒加载的服务静态依赖另外一个或多个服务的场景，可以在初始化时直接将配置加入sidecar crd。
+
+下面的样例中，为启用懒加载的服务添加对`reviews.default`服务的静态依赖关系。
+
+```yaml
+# servicefence
+spec:
+  enable: true
+  host:
+    reviews.default.svc.cluster.local: # static dependenct of reviews.default service
+      stable:
+
+# related sidecar
+spec:
+  egress:
+  - hosts:
+    - '*/reviews.default.svc.cluster.local'
+    - istio-system/*
+    - mesh-operator/*
+```
+
+
+
+#### 依赖某个namespace所有服务
+
+适用于启用懒加载的服务静态依赖另外一个或多个namespace中所有服务的场景，可以在初始化时直接将配置加入sidecar crd。
+
+下面的样例中，为启用懒加载的服务添加对`test`命名空间中所有服务的静态依赖关系。
+
+```yaml
+# servicefence
+spec:
+  enable: true
+  host:
+    test/*: {} # static dependency of all services in test namespace
+
+# related sidecar
+spec:
+  egress:
+  - hosts:
+    - test/*
+    - istio-system/*
+    - mesh-operator/*
+```
+
+
+
+#### 依赖具有某个label的所有服务
+
+适用于启用懒加载的服务静态依赖具有某个label或多个label的所有服务的场景，可以在初始化时直接将配置加入sidecar crd。
+
+下面的样例中，为启用懒加载的服务添加拥有`app=details`的所有服务，以及拥有`app=reviews, group=default`的所有服务的静态依赖关系。
+
+```yaml
+# servicefence
+spec:
+  enable: true
+  labelSelector: # Match service label, multiple selectors are 'or' relationship
+    - selector:
+        app: details
+    - selector: # labels in one selector are 'and' relationship
+        app: reviews
+        group: default
+
+# related sidecar
+spec:
+  egress:
+  - hosts:
+    - '*/details.default.svc.cluster.local' # with label "app=details"
+    - '*/details.test.svc.cluster.local' # with label "app=details"
+    - '*/reviews.default.svc.cluster.local' # with label "app=details" and "group=default"
+    - istio-system/*
+    - mesh-operator/*
+```
+
+
 
 
 
