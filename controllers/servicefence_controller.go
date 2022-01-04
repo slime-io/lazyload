@@ -64,6 +64,7 @@ type ServicefenceReconciler struct {
 	enabledNamespaces    map[string]bool
 	nsSvcCache           *NsSvcCache
 	labelSvcCache        *LabelSvcCache
+	svcSelectorCache     *SvcSelectorCache
 	defaultAddNamespaces []string
 }
 
@@ -92,7 +93,7 @@ func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env bootstrap.Envir
 	}
 
 	// start service related cache
-	r.nsSvcCache, r.labelSvcCache, err = newSvcCache(env.K8SClient)
+	r.nsSvcCache, r.labelSvcCache, r.svcSelectorCache, err = newSvcCache(r.env)
 	if err != nil {
 		log.Errorf("init LabelSvcCache err: %v", err)
 		return nil

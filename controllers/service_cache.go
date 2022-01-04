@@ -6,21 +6,25 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"slime.io/slime/framework/bootstrap"
 	"slime.io/slime/framework/util"
 )
 
-func newSvcCache(clientSet *kubernetes.Clientset) (*NsSvcCache, *LabelSvcCache, error) {
-	log := log.WithField("function", "newLabelSvcCache")
+func newSvcCache(env bootstrap.Environment) (*NsSvcCache, *LabelSvcCache, *SvcSelectorCache, error) {
+	log := log.WithField("function", "newSvcCache")
+	clientSet := env.K8SClient
+
 	nsSvcCache := &NsSvcCache{Data: map[string]map[string]struct{}{}}
 	labelSvcCache := &LabelSvcCache{Data: map[LabelItem]map[string]struct{}{}}
+	svcSelectorCache := &SvcSelectorCache{Data: map[types.NamespacedName]string{}}
 
 	// init labelSvcCache
 	services, err := clientSet.CoreV1().Services("").List(metav1.ListOptions{})
 	if err != nil {
-		return nil, nil, stderrors.New("failed to get service list")
+		return nil, nil, nil, stderrors.New("failed to get service list")
 	}
 
 	for _, service := range services.Items {
@@ -41,6 +45,11 @@ func newSvcCache(clientSet *kubernetes.Clientset) (*NsSvcCache, *LabelSvcCache, 
 			}
 			labelSvcCache.Data[label][svc] = struct{}{}
 		}
+		nsName := types.NamespacedName{
+			Namespace: ns,
+			Name:      name,
+		}
+		svcSelectorCache.Data[nsName] = service.Spec.Selector[env.Config.Global.Service]
 	}
 
 	// init service watcher
@@ -89,6 +98,7 @@ func newSvcCache(clientSet *kubernetes.Clientset) (*NsSvcCache, *LabelSvcCache, 
 				delete(nsSvcCache.Data[ns], eventSvc)
 				nsSvcCache.Unlock()
 				// labelSvcCache already deleted, skip
+				// svcSelectorCache reconsiles in refreshFenceStatusOfService, skip
 				continue
 			}
 
@@ -113,10 +123,11 @@ func newSvcCache(clientSet *kubernetes.Clientset) (*NsSvcCache, *LabelSvcCache, 
 				labelSvcCache.Data[label][eventSvc] = struct{}{}
 			}
 			labelSvcCache.Unlock()
+			// svcSelectorCache reconsiles in refreshFenceStatusOfService, skip
 
 		}
 	}()
 
-	return nsSvcCache, labelSvcCache, nil
+	return nsSvcCache, labelSvcCache, svcSelectorCache, nil
 
 }

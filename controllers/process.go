@@ -146,7 +146,35 @@ func (r *ServicefenceReconciler) ReconcileService(req ctrl.Request) (ctrl.Result
 	r.reconcileLock.Lock()
 	defer r.reconcileLock.Unlock()
 
-	return r.refreshFenceStatusOfService(ctx, nil, req.NamespacedName)
+	r.svcSelectorCache.Lock()
+	defer r.svcSelectorCache.Unlock()
+
+	nsName := types.NamespacedName{Namespace: req.Namespace}
+	svc := &corev1.Service{}
+	err := r.Client.Get(ctx, req.NamespacedName, svc)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// delete svc event
+			nsName.Name = r.svcSelectorCache.Data[req.NamespacedName]
+			delete(r.svcSelectorCache.Data, req.NamespacedName)
+			return r.refreshFenceStatusOfService(ctx, nil, nsName)
+		} else {
+			log.Errorf("get service %s error, %+v", req.NamespacedName, err)
+			return reconcile.Result{}, err
+		}
+	} else {
+		// add or update svc event
+		if sel, ok := r.svcSelectorCache.Data[req.NamespacedName]; ok && sel != svc.Spec.Selector[r.env.Config.Global.Service] {
+			nsName.Name = sel
+			// delete old sf
+			if _, err = r.refreshFenceStatusOfService(ctx, nil, nsName); err != nil {
+				return reconcile.Result{}, err
+			}
+		}
+		r.svcSelectorCache.Data[req.NamespacedName] = svc.Spec.Selector[r.env.Config.Global.Service]
+		return r.refreshFenceStatusOfService(ctx, svc, types.NamespacedName{})
+
+	}
 }
 
 func (r *ServicefenceReconciler) ReconcileNamespace(req ctrl.Request) (ret ctrl.Result, err error) {
@@ -214,22 +242,10 @@ func (r *ServicefenceReconciler) ReconcileNamespace(req ctrl.Request) (ret ctrl.
 
 // refreshFenceStatusOfService caller should hold the reconcile lock.
 func (r *ServicefenceReconciler) refreshFenceStatusOfService(ctx context.Context, svc *corev1.Service, nsName types.NamespacedName) (reconcile.Result, error) {
-	if svc == nil {
-		// Fetch the Service instance
-		svc = &corev1.Service{}
-		err := r.Client.Get(ctx, nsName, svc)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				svc = nil
-			} else {
-				log.Errorf("get service %s error, %+v", nsName, err)
-				return reconcile.Result{}, err
-			}
-		}
-	} else {
+	if svc != nil {
 		nsName = types.NamespacedName{
 			Namespace: svc.Namespace,
-			Name:      svc.Name,
+			Name:      svc.Spec.Selector[r.env.Config.Global.Service],
 		}
 	}
 
@@ -250,8 +266,8 @@ func (r *ServicefenceReconciler) refreshFenceStatusOfService(ctx context.Context
 			sf = &lazyloadv1alpha1.ServiceFence{
 				TypeMeta: metav1.TypeMeta{},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      svc.Name,
-					Namespace: svc.Namespace,
+					Name:      nsName.Name,
+					Namespace: nsName.Namespace,
 				},
 				Spec: lazyloadv1alpha1.ServiceFenceSpec{
 					Enable: true,

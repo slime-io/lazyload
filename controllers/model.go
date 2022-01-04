@@ -6,6 +6,7 @@
 package controllers
 
 import (
+	"k8s.io/apimachinery/pkg/types"
 	"slime.io/slime/framework/model"
 	modmodel "slime.io/slime/modules/lazyload/model"
 	"sync"
@@ -30,5 +31,10 @@ type NsSvcCache struct {
 
 type LabelSvcCache struct {
 	Data map[LabelItem]map[string]struct{}
+	sync.RWMutex
+}
+
+type SvcSelectorCache struct {
+	Data map[types.NamespacedName]string
 	sync.RWMutex
 }
