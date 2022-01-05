@@ -247,6 +247,7 @@ func (r *ServicefenceReconciler) refreshFenceStatusOfService(ctx context.Context
 
 	if sf == nil {
 		if svc != nil && r.isServiceFenced(ctx, svc) {
+			// add svc -> add sf
 			sf = &lazyloadv1alpha1.ServiceFence{
 				TypeMeta: metav1.TypeMeta{},
 				ObjectMeta: metav1.ObjectMeta{
@@ -255,16 +256,20 @@ func (r *ServicefenceReconciler) refreshFenceStatusOfService(ctx context.Context
 				},
 				Spec: lazyloadv1alpha1.ServiceFenceSpec{
 					Enable: true,
+					WorkloadSelector: &lazyloadv1alpha1.WorkloadSelector{
+						FromService: true,
+					},
 				},
 			}
 			markFenceCreatedByController(sf)
 			model.PatchIstioRevLabel(&sf.Labels, r.env.IstioRev())
-			if err := r.Client.Create(ctx, sf); err != nil {
+			if err = r.Client.Create(ctx, sf); err != nil {
 				log.Errorf("create fence %s failed, %+v", nsName, err)
 				return reconcile.Result{}, err
 			}
 		}
 	} else if rev := model.IstioRevFromLabel(sf.Labels); !r.env.RevInScope(rev) {
+		// check if svc needs auto fence created
 		log.Errorf("existed fence %v istioRev %s but our rev %s, skip ...",
 			nsName, rev, r.env.IstioRev())
 	} else if isFenceCreatedByController(sf) && (svc == nil || !r.isServiceFenced(ctx, svc)) {

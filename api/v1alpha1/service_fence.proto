@@ -95,6 +95,8 @@ message Timestamp {
 //      - selector: # labels in same selector are 'and' relationship
 //          project: front
 //          group: web
+//    workloadSelector:
+//      fromService: true
 message ServiceFenceSpec {
     map<string, RecyclingStrategy> host = 1;
     // Switch to render servicefence as sidecar
@@ -103,10 +105,17 @@ message ServiceFenceSpec {
     repeated string namespaceSelector = 3;
     // services match one selector of the label selector are all static dependency, will not expire
     repeated Selector labelSelector = 4;
+    WorkloadSelector workloadSelector = 5;
 }
 
 message Selector {
     map<string, string> selector = 1;
+}
+
+message WorkloadSelector {
+    // true: sidecar.workloadSelector.labels = svc.spec.selector
+    // false: sidecar.workloadSelector.labels = map[string]string{env.config.global.service: svc.name}
+    bool fromService = 1;
 }
 
 message RecyclingStrategy {
