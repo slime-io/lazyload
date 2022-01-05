@@ -20,6 +20,7 @@ metadata:
   labels:
     app: global-sidecar
     service: global-sidecar
+    slime.io/serviceFenced: "false"
 spec:
   ports:
     {{- range .fence.wormholePort }}
