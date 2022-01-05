@@ -630,7 +630,7 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 
 	sidecar := &istio.Sidecar{
 		WorkloadSelector: &istio.WorkloadSelector{
-			Labels: map[string]string{env.Config.Global.Service: sf.Name},
+			Labels: map[string]string{},
 		},
 		Egress: []*istio.IstioEgressListener{
 			{
@@ -638,6 +638,33 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 				Hosts: hosts,
 			},
 		},
+	}
+
+	// Fetch the Service instance
+	nsName := types.NamespacedName{
+		Name:      sf.Name,
+		Namespace: sf.Namespace,
+	}
+
+	svc := &corev1.Service{}
+	if err := r.Client.Get(context.TODO(), nsName, svc); err != nil {
+		if errors.IsNotFound(err) {
+			log.Warningf("cannot find service %s for servicefence, skip sidecar generating", nsName)
+			return nil, nil
+		} else {
+			log.Errorf("get service %s error, %+v", nsName, err)
+			return nil, err
+		}
+	}
+
+	if sf.Spec.WorkloadSelector != nil && sf.Spec.WorkloadSelector.FromService {
+		//sidecar.WorkloadSelector.Labels = svc.Spec.Selector
+		for k, v := range svc.Spec.Selector {
+			sidecar.WorkloadSelector.Labels[k] = v
+		}
+	} else {
+		// compatible with old version lazyload
+		sidecar.WorkloadSelector.Labels[env.Config.Global.Service] = svc.Name
 	}
 
 	spec, err := util.ProtoToMap(sidecar)
