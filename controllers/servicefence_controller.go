@@ -657,7 +657,14 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 		}
 	}
 
-	if sf.Spec.WorkloadSelector != nil && sf.Spec.WorkloadSelector.FromService {
+	// generate sidecar.spec.workloadSelector
+	// priority: sf.spec.workloadSelector.labels > sf.spec.workloadSelector.fromService
+	if sf.Spec.WorkloadSelector != nil && len(sf.Spec.WorkloadSelector.Labels) > 0 {
+		//sidecar.WorkloadSelector.Labels = sf.Spec.WorkloadSelector.Labels
+		for k, v := range sf.Spec.WorkloadSelector.Labels {
+			sidecar.WorkloadSelector.Labels[k] = v
+		}
+	} else if sf.Spec.WorkloadSelector != nil && sf.Spec.WorkloadSelector.FromService {
 		//sidecar.WorkloadSelector.Labels = svc.Spec.Selector
 		for k, v := range svc.Spec.Selector {
 			sidecar.WorkloadSelector.Labels[k] = v
