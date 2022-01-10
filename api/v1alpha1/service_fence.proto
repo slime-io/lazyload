@@ -96,7 +96,10 @@ message Timestamp {
 //          project: front
 //          group: web
 //    workloadSelector:
-//      fromService: true
+//      labels:
+//        group: foo
+//        zone: hz
+//      fromService: false
 message ServiceFenceSpec {
     map<string, RecyclingStrategy> host = 1;
     // Switch to render servicefence as sidecar
@@ -113,9 +116,12 @@ message Selector {
 }
 
 message WorkloadSelector {
+    // take effect when labels is empty
     // true: sidecar.workloadSelector.labels = svc.spec.selector
     // false: sidecar.workloadSelector.labels = map[string]string{env.config.global.service: svc.name}
     bool fromService = 1;
+    // top priority, if labels is not empty, sidecar.workloadSelector.labels = sf.spec.workloadSelector.labels
+    map<string, string> labels = 2;
 }
 
 message RecyclingStrategy {
