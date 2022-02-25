@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"slime.io/slime/framework/apis/config/v1alpha1"
 	"slime.io/slime/framework/model"
 	"slime.io/slime/framework/model/metric"
 	"sort"
@@ -53,7 +52,7 @@ import (
 type ServicefenceReconciler struct {
 	client.Client
 	Scheme               *runtime.Scheme
-	cfg                  *v1alpha1.Fence
+	cfg                  *lazyloadv1alpha1.Fence
 	env                  bootstrap.Environment
 	interestMeta         map[string]bool
 	interestMetaCopy     map[string]bool // for outside read
@@ -68,7 +67,7 @@ type ServicefenceReconciler struct {
 }
 
 // NewReconciler returns a new reconcile.Reconciler
-func NewReconciler(cfg *v1alpha1.Fence, mgr manager.Manager, env bootstrap.Environment) *ServicefenceReconciler {
+func NewReconciler(cfg *lazyloadv1alpha1.Fence, mgr manager.Manager, env bootstrap.Environment) *ServicefenceReconciler {
 	log := modmodel.ModuleLog.WithField(model.LogFieldKeyFunction, "NewReconciler")
 
 	// generate producer config

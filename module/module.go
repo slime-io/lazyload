@@ -9,7 +9,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	istioapi "slime.io/slime/framework/apis"
-	"slime.io/slime/framework/apis/config/v1alpha1"
 	"slime.io/slime/framework/bootstrap"
 	basecontroller "slime.io/slime/framework/controllers"
 	"slime.io/slime/framework/model/module"
@@ -21,7 +20,7 @@ import (
 var log = modmodel.ModuleLog
 
 type Module struct {
-	config v1alpha1.Fence
+	config lazyloadapiv1alpha1.Fence
 }
 
 func (mo *Module) Name() string {
@@ -48,13 +47,25 @@ func (mo *Module) InitScheme(scheme *runtime.Scheme) error {
 func (mo *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cbs module.InitCallbacks) error {
 
 	cfg := &mo.config
-	if env.Config != nil && env.Config.Fence != nil {
-		cfg = env.Config.Fence
-	}
+
 	sfReconciler := controllers.NewReconciler(cfg, mgr, env)
 
 	var builder basecontroller.ObjectReconcilerBuilder
-	if err := builder.Add(basecontroller.ObjectReconcileItem{
+
+	// auto generate ServiceFence or not
+	if cfg == nil || !cfg.DisableAutoFence {
+		builder = builder.Add(basecontroller.ObjectReconcileItem{
+			Name:    "Namespace",
+			ApiType: &corev1.Namespace{},
+			R:       reconcile.Func(sfReconciler.ReconcileNamespace),
+		}).Add(basecontroller.ObjectReconcileItem{
+			Name:    "Service",
+			ApiType: &corev1.Service{},
+			R:       reconcile.Func(sfReconciler.ReconcileService),
+		})
+	}
+
+	builder = builder.Add(basecontroller.ObjectReconcileItem{
 		Name: "ServiceFence",
 		R:    sfReconciler,
 	}).Add(basecontroller.ObjectReconcileItem{
@@ -64,15 +75,9 @@ func (mo *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cb
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
 		},
-	}).Add(basecontroller.ObjectReconcileItem{
-		Name:    "Service",
-		ApiType: &corev1.Service{},
-		R:       reconcile.Func(sfReconciler.ReconcileService),
-	}).Add(basecontroller.ObjectReconcileItem{
-		Name:    "Namespace",
-		ApiType: &corev1.Namespace{},
-		R:       reconcile.Func(sfReconciler.ReconcileNamespace),
-	}).Build(mgr); err != nil {
+	})
+
+	if err := builder.Build(mgr); err != nil {
 		log.Errorf("unable to create controller,%+v", err)
 		os.Exit(1)
 	}
