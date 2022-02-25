@@ -1,0 +1,17 @@
+/*
+* @Author: wangchenyu
+* @Date: 2022/2/23
+*/
+
+syntax = "proto3";
+package slime.microservice.lazyload.v1alpha1;
+
+option go_package = "slime.io/slime/modules/lazyload/api/v1alpha1";
+
+message Fence {
+  // service ports enable lazyload
+  repeated string wormholePort = 1;
+  // whether enable ServiceFence auto generating
+  // default value is false
+  bool disableAutoFence = 2;
+}
