@@ -3,12 +3,14 @@ package controllers
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	envoy_config_core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	data_accesslog "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v3"
 	prometheusApi "github.com/prometheus/client_golang/api"
 	prometheusV1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/watch"
@@ -19,6 +21,7 @@ import (
 	"slime.io/slime/framework/model/metric"
 	"slime.io/slime/framework/model/trigger"
 	"slime.io/slime/framework/util"
+	lazyloadapiv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +32,7 @@ const (
 	AccessLogConvertorName     = "lazyload-accesslog-convertor"
 	MetricSourceTypePrometheus = "prometheus"
 	MetricSourceTypeAccesslog  = "accesslog"
+	SvfResource                = "servicefences"
 )
 
 // call back function for watcher producer
@@ -130,10 +134,20 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 		// init log source port
 		port := env.Config.Global.Misc["logSourcePort"]
 
+		// init initCache
+		initCache, err := newInitCache(env)
+		if err != nil {
+			return nil, err
+		}
+		log.Debugf("initCache is %+v", initCache)
+
+		// make preparation for handler
 		ipToSvcCache, cacheLock, err := newIpToSvcCache(env.K8SClient)
 		if err != nil {
 			return nil, err
 		}
+
+		// init accessLog source config
 		accessLogSourceConfig = metric.AccessLogSourceConfig{
 			ServePort: port,
 			AccessLogConvertorConfigs: []metric.AccessLogConvertorConfig{
@@ -142,6 +156,7 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 					Handler: func(logEntry []*data_accesslog.HTTPAccessLogEntry) (map[string]map[string]string, error) {
 						return accessLogHandler(logEntry, ipToSvcCache, cacheLock)
 					},
+					InitCache: initCache,
 				},
 			},
 		}
@@ -204,6 +219,44 @@ func newPrometheusSourceConfig(env bootstrap.Environment) (metric.PrometheusSour
 	return metric.PrometheusSourceConfig{
 		Api: prometheusV1.NewAPI(promClient),
 	}, nil
+}
+
+func newInitCache(env bootstrap.Environment) (map[string]map[string]string, error) {
+
+	result := make(map[string]map[string]string)
+
+	svfGvr := schema.GroupVersionResource{
+		Group:    lazyloadapiv1alpha1.GroupVersion.Group,
+		Version:  lazyloadapiv1alpha1.GroupVersion.Version,
+		Resource: SvfResource,
+	}
+
+	dc := env.DynamicClient
+	svfList, err := dc.Resource(svfGvr).List(metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list servicefence error: %v", err)
+	}
+	for _, svf := range svfList.Items {
+		meta := svf.GetNamespace() + "/" + svf.GetName()
+		value := make(map[string]string)
+		ms, existed, err := unstructured.NestedMap(svf.Object, "status", "metricStatus")
+		if err != nil {
+			log.Errorf("got servicefence %s status.metricStatus error: %v", meta, err)
+			continue
+		}
+		if existed {
+			for k, v := range ms {
+				ok := false
+				if value[k], ok = v.(string); !ok {
+					log.Errorf("servicefence %s metricStatus value is not string, value: %+v", meta, v)
+					continue
+				}
+			}
+		}
+		result[meta] = value
+	}
+
+	return result, nil
 }
 
 func accessLogHandler(logEntry []*data_accesslog.HTTPAccessLogEntry, ipToSvcCache map[string]string, cacheLock *sync.RWMutex) (map[string]map[string]string, error) {
