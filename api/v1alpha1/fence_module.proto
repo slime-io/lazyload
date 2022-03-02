@@ -14,4 +14,19 @@ message Fence {
   // whether enable ServiceFence auto generating
   // default value is false
   bool disableAutoFence = 2;
+  // the namespace list which enable lazyload
+  repeated string namespace = 3;
+  // custom outside dispatch traffic rules
+  repeated Dispatch dispatches = 4;
+}
+
+// The general idea is to assign different default traffic to different targets
+// for correct processing by means of domain matching.
+message Dispatch {
+  // dispatch rule name
+  string name = 1;
+  // domain matching contents
+  repeated string domains = 2;
+  // target cluster
+  string cluster = 3;
 }
