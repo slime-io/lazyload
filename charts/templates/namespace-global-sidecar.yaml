@@ -3,12 +3,15 @@
   {{ if .Values.component.globalSidecar.enable }}
   {{ $gs := .Values.component.globalSidecar }}
   {{ range $.Values.module }}
-  {{ if .fence }}
+  {{ if eq .name "lazyload" }}
   {{ if .global }}
   {{ if .global.misc }}
   {{ if .global.misc.globalSidecarMode }}
   {{ if eq .global.misc.globalSidecarMode "namespace" }}
-  {{ $f := .fence }}
+  {{ $f := .general }}
+  {{ if .fence }}
+  {{ $f = .fence }}
+  {{- end -}}
   {{ $g := .global }}
   {{ $name := .name }}
   {{ range $_, $ns := $f.namespace }}
