@@ -3,7 +3,7 @@
 {{ if .Values.component.globalSidecar.enable }}
 {{ $gs := .Values.component.globalSidecar }}
   {{ range $.Values.module }}
-  {{ if eq .name "lazyload" }}
+  {{ if or (eq (default "" .name) "lazyload") (eq (default "" .kind) "lazyload") }}
   {{ if .global }}
   {{ if .global.misc }}
   {{ if .global.misc.globalSidecarMode }}
