@@ -17,7 +17,7 @@
 
 ## 特点
 
-1. 支持1.8+的Istio版本，无侵入性
+1. 支持1.8+的Istio版本，无侵入性，[版本适配详情](https://github.com/slime-io/lazyload/issues/26#issuecomment-1053926465)
 2. 兜底转发过程支持Istio所有流量治理能力
 3. 兜底逻辑简单，与服务数量无关，无性能问题
 4. 支持Namespace，Service等维度灵活启用懒加载
