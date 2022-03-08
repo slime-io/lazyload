@@ -23,7 +23,7 @@ type Module struct {
 	config lazyloadapiv1alpha1.Fence
 }
 
-func (mo *Module) Name() string {
+func (mo *Module) Kind() string {
 	return modmodel.ModuleName
 }
 
@@ -42,6 +42,11 @@ func (mo *Module) InitScheme(scheme *runtime.Scheme) error {
 		}
 	}
 	return nil
+}
+
+func (mo *Module) Clone() module.Module {
+	ret := *mo
+	return &ret
 }
 
 func (mo *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cbs module.InitCallbacks) error {
