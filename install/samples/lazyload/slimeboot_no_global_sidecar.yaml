@@ -9,9 +9,10 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: v0.2.0-7ca7f04
   module:
-    - name: lazyload
-      fence:
-        enable: true
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
+      enable: true
+      general: # replace previous "fence" field
         wormholePort:
           - "9080"
       global:

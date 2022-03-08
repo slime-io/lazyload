@@ -106,9 +106,10 @@ metadata:
   namespace: mesh-operator
 spec:
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         # other config
   component:
     globalSidecar:
@@ -141,9 +142,10 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
         namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
@@ -194,9 +196,10 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
         namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
@@ -254,9 +257,10 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
         namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
@@ -306,9 +310,10 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: {{your_lazyload_tag}}
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
         namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
@@ -367,9 +372,10 @@ Example
 ```yaml
 spec:
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         wormholePort: # replace to your application svc ports
           - "9080"
       global:
@@ -462,8 +468,10 @@ Sample configuration.
 
 ```yaml
 module:
-  - name: fence
-    fence:
+  - name: lazyload
+    kind: lazyload
+    enable: true
+    general:
       wormholePort:
       - "80"
       - "8080"
@@ -486,8 +494,6 @@ module:
         domains:
         - "*"
         cluster: "PassthroughCluster"  # a special istio cluster which will passthrough the traffic according to orgDest info. It's the default behavior of native istio.
-
-foo: bar
 ```
 
 > In this example, we dispatch a portion of the traffic to the specified cluster; let another part go to the global sidecar; and then for the rest of the traffic, let it keep the native istio behavior: passthrough.
@@ -496,7 +502,7 @@ foo: bar
 
 **Note**:
 
-* In custom assignment scenarios, if you want to keep the original logic "all other undefined traffic goes to global sidecar", you need to explicitly configure the last item as above
+* In custom assignment scenarios, if you want to keep the original logic "all other undefined traffic goes to global sidecar", you need to explicitly configure the second from bottom item as above.
 
 
 
@@ -673,9 +679,10 @@ spec:
     repository: docker.io/slimeio/slime-lazyload
     tag: master-e5f2d83-dirty_1b68486
   module:
-    - name: lazyload
+    - name: lazyload # custom value
+      kind: lazyload # should be "lazyload"
       enable: true
-      fence:
+      general: # replace previous "fence" field
         wormholePort: # replace to your application svc ports
           - "9080"
       global:
