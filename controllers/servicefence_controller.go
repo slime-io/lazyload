@@ -20,12 +20,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"slime.io/slime/framework/model"
-	"slime.io/slime/framework/model/metric"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"slime.io/slime/framework/model"
+	"slime.io/slime/framework/model/metric"
 
 	istio "istio.io/api/networking/v1alpha3"
 	corev1 "k8s.io/api/core/v1"
@@ -133,7 +134,7 @@ func (r *ServicefenceReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		if errors.IsNotFound(err) {
 			// TODO should be recovered? maybe we should call refreshFenceStatusOfService here
 			log.Info("serviceFence is deleted")
-			//r.interestMeta.Pop(req.NamespacedName.String())
+			// r.interestMeta.Pop(req.NamespacedName.String())
 			delete(r.interestMeta, req.NamespacedName.String())
 			r.updateInterestMetaCopy()
 			return r.refreshFenceStatusOfService(context.TODO(), nil, req.NamespacedName)
@@ -307,7 +308,6 @@ func parseHost(sourceNs, h string) *types.NamespacedName {
 }
 
 func (r *ServicefenceReconciler) updateVisitedHostStatus(sf *lazyloadv1alpha1.ServiceFence) Diff {
-
 	domains := r.genDomains(sf)
 
 	delta := Diff{
@@ -341,7 +341,6 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(sf *lazyloadv1alpha1.Se
 }
 
 func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence) map[string]*lazyloadv1alpha1.Destinations {
-
 	domains := make(map[string]*lazyloadv1alpha1.Destinations)
 
 	addDomainsWithHost(domains, sf, r.nsSvcCache)
@@ -353,7 +352,6 @@ func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence) m
 
 // update domains with spec.host
 func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence, nsSvcCache *NsSvcCache) {
-
 	checkStatus := func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status {
 		switch {
 		case strategy.Stable != nil:
@@ -373,7 +371,6 @@ func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *l
 	}
 
 	for h, strategy := range sf.Spec.Host {
-
 		if strings.HasSuffix(h, "/*") {
 			// handle namespace level host, like 'default/*'
 			handleNsHost(h, domains, nsSvcCache)
@@ -381,7 +378,6 @@ func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *l
 			// handle service level host, like 'a.default.svc.cluster.local' or 'a' or 'a.default'
 			handleSvcHost(h, strategy, checkStatus, domains, sf)
 		}
-
 	}
 }
 
@@ -430,8 +426,8 @@ func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, n
 
 func handleSvcHost(h string, strategy *lazyloadv1alpha1.RecyclingStrategy,
 	checkStatus func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status,
-	domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
-
+	domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
+) {
 	now := time.Now().Unix()
 
 	fullHost := h
@@ -469,8 +465,8 @@ func handleSvcHost(h string, strategy *lazyloadv1alpha1.RecyclingStrategy,
 
 // update domains with spec.labelSelector
 func addDomainsWithLabelSelector(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
-	labelSvcCache *LabelSvcCache) {
-
+	labelSvcCache *LabelSvcCache,
+) {
 	labelSvcCache.RLock()
 	defer labelSvcCache.RUnlock()
 
@@ -526,12 +522,10 @@ func addDomainsWithLabelSelector(domains map[string]*lazyloadv1alpha1.Destinatio
 		}
 
 	}
-
 }
 
 // update domains with Status.MetricStatus
 func addDomainsWithMetricStatus(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
-
 	for metricName := range sf.Status.MetricStatus {
 		metricName = strings.Trim(metricName, "{}")
 		if !strings.HasPrefix(metricName, "destination_service") && !strings.HasPrefix(metricName, "request_host") {
@@ -659,12 +653,12 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 	// generate sidecar.spec.workloadSelector
 	// priority: sf.spec.workloadSelector.labels > sf.spec.workloadSelector.fromService
 	if sf.Spec.WorkloadSelector != nil && len(sf.Spec.WorkloadSelector.Labels) > 0 {
-		//sidecar.WorkloadSelector.Labels = sf.Spec.WorkloadSelector.Labels
+		// sidecar.WorkloadSelector.Labels = sf.Spec.WorkloadSelector.Labels
 		for k, v := range sf.Spec.WorkloadSelector.Labels {
 			sidecar.WorkloadSelector.Labels[k] = v
 		}
 	} else if sf.Spec.WorkloadSelector != nil && sf.Spec.WorkloadSelector.FromService {
-		//sidecar.WorkloadSelector.Labels = svc.Spec.Selector
+		// sidecar.WorkloadSelector.Labels = svc.Spec.Selector
 		for k, v := range svc.Spec.Selector {
 			sidecar.WorkloadSelector.Labels[k] = v
 		}

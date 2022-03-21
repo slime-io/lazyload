@@ -3,13 +3,14 @@ package proxy
 import (
 	"context"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -17,8 +18,7 @@ const (
 	HeaderOrigDest = "Slime-Orig-Dest"
 )
 
-type HealthzProxy struct {
-}
+type HealthzProxy struct{}
 
 func (p *HealthzProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// health check
@@ -28,8 +28,7 @@ func (p *HealthzProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-type Proxy struct {
-}
+type Proxy struct{}
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var (

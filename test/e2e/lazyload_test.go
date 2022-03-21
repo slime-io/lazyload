@@ -1,18 +1,20 @@
 package e2e
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
 	"github.com/onsi/ginkgo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"os"
-	"os/exec"
-	"path/filepath"
+
 	"slime.io/slime/framework/test/e2e/framework"
 	e2epod "slime.io/slime/framework/test/e2e/framework/pod"
 	"slime.io/slime/framework/test/e2e/framework/testfiles"
-	"strings"
-	"time"
 )
 
 var _ = ginkgo.Describe("Slime e2e test", func() {
@@ -198,7 +200,6 @@ func createExampleApps(f *framework.Framework) {
 }
 
 func createServiceFence(f *framework.Framework, strictRev bool) {
-
 	// create CR ServiceFence
 	serviceFenceYaml := readFile(test, "samples/lazyload/servicefence_productpage.yaml")
 	serviceFenceYaml = strings.ReplaceAll(serviceFenceYaml, "{{istioRevKey}}", substituteValue("istioRevKey", istioRevKey))
@@ -263,7 +264,6 @@ func createServiceFence(f *framework.Framework, strictRev bool) {
 }
 
 func updateSidecar(f *framework.Framework) {
-
 	pods, err := f.ClientSet.CoreV1().Pods(nsApps).List(metav1.ListOptions{})
 	framework.ExpectNoError(err)
 ExecLoop:
@@ -284,7 +284,7 @@ ExecLoop:
 					continue
 				}
 				break ExecLoop
-				//framework.ExpectNoError(err)
+				// framework.ExpectNoError(err)
 			}
 		}
 	}
@@ -374,5 +374,5 @@ func cleanupKubectlInputs(ns string, fileContents string, selectors ...string) {
 	// support backward compatibility : file paths or raw json - since we are removing file path
 	// dependencies from this test.
 	framework.RunKubectlOrDieInput(ns, fileContents, "delete", "--grace-period=0", "--force", "-f", "-")
-	//assertCleanup(ns, selectors...)
+	// assertCleanup(ns, selectors...)
 }
