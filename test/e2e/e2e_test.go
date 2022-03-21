@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
+
 	framework2 "slime.io/slime/framework/test/e2e/framework"
 	"slime.io/slime/framework/test/e2e/framework/testfiles"
-	"testing"
 
 	"github.com/golang/glog"
 	"github.com/onsi/ginkgo"
@@ -30,7 +31,7 @@ func RunE2ETests(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
 
 	var r []ginkgo.Reporter
-	var ReportDir = "reports"
+	ReportDir := "reports"
 
 	if framework2.TestContext.ReportDir != "" {
 		ReportDir = framework2.TestContext.ReportDir

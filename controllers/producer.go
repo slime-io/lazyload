@@ -4,6 +4,11 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	envoy_config_core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	data_accesslog "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v3"
 	prometheusApi "github.com/prometheus/client_golang/api"
@@ -22,10 +27,6 @@ import (
 	"slime.io/slime/framework/model/trigger"
 	"slime.io/slime/framework/util"
 	lazyloadapiv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 const (
@@ -37,7 +38,6 @@ const (
 
 // call back function for watcher producer
 func (r *ServicefenceReconciler) handleWatcherEvent(event trigger.WatcherEvent) metric.QueryMap {
-
 	// check event
 	gvks := []schema.GroupVersionKind{
 		{Group: "networking.istio.io", Version: "v1beta1", Kind: "Sidecar"},
@@ -77,7 +77,6 @@ func (r *ServicefenceReconciler) handleWatcherEvent(event trigger.WatcherEvent) 
 
 // call back function for ticker producer
 func (r *ServicefenceReconciler) handleTickerEvent(event trigger.TickerEvent) metric.QueryMap {
-
 	// no need to check time duration
 
 	// generate query map for producer
@@ -115,7 +114,6 @@ func generateHandler(name, namespace, pName string, pHandler *v1alpha1.Prometheu
 }
 
 func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error) {
-
 	// init metric source
 	var enablePrometheusSource bool
 	var prometheusSourceConfig metric.PrometheusSourceConfig
@@ -200,7 +198,6 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 	}
 
 	return pc, nil
-
 }
 
 func newPrometheusSourceConfig(env bootstrap.Environment) (metric.PrometheusSourceConfig, error) {
@@ -222,7 +219,6 @@ func newPrometheusSourceConfig(env bootstrap.Environment) (metric.PrometheusSour
 }
 
 func newInitCache(env bootstrap.Environment) (map[string]map[string]string, error) {
-
 	result := make(map[string]map[string]string)
 
 	svfGvr := schema.GroupVersionResource{
@@ -265,7 +261,7 @@ func accessLogHandler(logEntry []*data_accesslog.HTTPAccessLogEntry, ipToSvcCach
 
 	tmpResult := make(map[string]map[string]int)
 	for _, entry := range logEntry {
-		//tmpValue := make(map[string]int)
+		// tmpValue := make(map[string]int)
 
 		// fetch sourceEp
 		sourceIp, err := fetchSourceIp(entry)

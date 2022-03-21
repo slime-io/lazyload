@@ -6,9 +6,10 @@
 package controllers
 
 import (
+	"sync"
+
 	"slime.io/slime/framework/model"
 	modmodel "slime.io/slime/modules/lazyload/model"
-	"sync"
 )
 
 var log = modmodel.ModuleLog.WithField(model.LogFieldKeyPkg, "controllers")

@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"context"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,7 +14,6 @@ import (
 	"slime.io/slime/framework/model"
 	"slime.io/slime/framework/model/metric"
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
-	"strings"
 )
 
 const (
@@ -44,7 +45,6 @@ func (r *ServicefenceReconciler) WatchMetric() {
 			r.ConsumeMetric(metric)
 		}
 	}
-
 }
 
 func (r *ServicefenceReconciler) ConsumeMetric(metric metric.Metric) {
@@ -71,7 +71,6 @@ func (r *ServicefenceReconciler) Refresh(req reconcile.Request, value map[string
 
 	sf := &lazyloadv1alpha1.ServiceFence{}
 	err := r.Client.Get(context.TODO(), req.NamespacedName, sf)
-
 	if err != nil {
 		if errors.IsNotFound(err) {
 			sf = nil

@@ -2,8 +2,10 @@ package main
 
 import (
 	"flag"
-	log "github.com/sirupsen/logrus"
 	"net/http"
+
+	log "github.com/sirupsen/logrus"
+
 	"slime.io/slime/modules/lazyload/pkg/proxy"
 )
 
@@ -16,7 +18,7 @@ func main() {
 		}
 	}()
 
-	var addr = flag.String("addr", "0.0.0.0:80", "The addr of the application.")
+	addr := flag.String("addr", "0.0.0.0:80", "The addr of the application.")
 	flag.Parse()
 
 	handler := &proxy.Proxy{}
