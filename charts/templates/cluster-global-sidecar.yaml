@@ -127,6 +127,58 @@ spec:
             {{- toYaml $gs.resources | nindent 12 }}
           securityContext:
             runAsUser: 1000
+---
+  {{- if or (not $g) (not $g.misc) (eq (default "prometheus" $g.misc.metricSourceType) "prometheus") }}
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: global-sidecar-metadata-exchange-remove
+  namespace: {{ $.Values.namespace }}
+spec:
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        proxy:
+          metadata:
+            SLIME_APP: LAZYLOAD_GLOBAL_SIDECAR
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: istio.metadata_exchange
+      patch:
+        operation: REMOVE
+    - applyTo: HTTP_FILTER
+      match:
+        proxy:
+          metadata:
+            SLIME_APP: LAZYLOAD_GLOBAL_SIDECAR
+        context: SIDECAR_OUTBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: istio.metadata_exchange
+      patch:
+        operation: REMOVE
+    - applyTo: HTTP_FILTER
+      match:
+        proxy:
+          metadata:
+            SLIME_APP: LAZYLOAD_GLOBAL_SIDECAR
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: istio.metadata_exchange
+      patch:
+        operation: REMOVE
+  {{- end }}
 {{ range $_, $ns := $f.namespace }}
 ---
 apiVersion: networking.istio.io/v1alpha3
