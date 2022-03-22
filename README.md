@@ -16,7 +16,7 @@
 
 ## Features
 
-1. Supports 1.8+ versions of Istio, without invasiveness, details at [recommended versions of istio](https://github.com/slime-io/lazyload/issues/26#issuecomment-1053926465)
+1. Supports 1.8+ versions of Istio, without invasiveness, details at [recommended versions of istio](https://github.com/slime-io/lazyload/issues/26)
 2. Forwarding process supports all Istio traffic capabilities
 3. Independent of the number of services, no performance issues
 4. Flexible enabled lazyload with support for Namespace, Service and other dimensions

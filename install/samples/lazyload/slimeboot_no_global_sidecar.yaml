@@ -7,7 +7,7 @@ spec:
   image:
     pullPolicy: Always
     repository: docker.io/slimeio/slime-lazyload
-    tag: v0.2.0-7ca7f04
+    tag: v0.2.2_linux_amd64
   module:
     - name: lazyload # custom value
       kind: lazyload # should be "lazyload"
