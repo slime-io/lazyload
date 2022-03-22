@@ -604,7 +604,7 @@ func (r *ServicefenceReconciler) newSidecar(sf *lazyloadv1alpha1.ServiceFence, e
 	// check whether using namespace global-sidecar
 	// if so, init config of sidecar will adds */global-sidecar.${svf.ns}.svc.cluster.local
 	if env.Config.Global.Misc["globalSidecarMode"] == "namespace" {
-		hosts = append(hosts, fmt.Sprintf("./global-sidecar.%s.svc.cluster.local", sf.Namespace))
+		hosts = append(hosts, fmt.Sprintf("*/global-sidecar.%s.svc.cluster.local", sf.Namespace))
 	}
 
 	// remove duplicated hosts
