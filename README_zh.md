@@ -18,11 +18,12 @@
 ## 特点
 
 1. 支持1.8+的Istio版本，无侵入性，[版本适配详情](https://github.com/slime-io/lazyload/issues/26)
-2. 兜底转发过程支持Istio所有流量治理能力
-3. 兜底逻辑简单，与服务数量无关，无性能问题
-4. 支持Namespace，Service等维度灵活启用懒加载
-5. 支持Accesslog和Prometheus等多种动态服务依赖获取方式
-6. 支持添加静态服务依赖关系，动静依赖关系结合，功能全面
+2. 可自动对接整个服务网格
+3. 兜底转发过程支持Istio所有流量治理能力
+4. 兜底逻辑简单，与服务数量无关，无性能问题
+5. 支持Namespace，Service等维度灵活启用懒加载
+6. 支持Accesslog和Prometheus等多种动态服务依赖获取方式
+7. 支持添加静态服务依赖关系，动静依赖关系结合，功能全面
 
 
 
@@ -79,7 +80,7 @@
 
 ## 特性介绍
 
-- 基于Accesslog开启懒加载
+- 可基于Accesslog开启懒加载
 - 基于namespace/service label自动生成ServiceFence
 - 支持自定义兜底流量分派
 - 支持添加静态服务依赖关系

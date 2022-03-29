@@ -17,8 +17,6 @@ spec:
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "80"
           - "9080"
-        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
-          - default
       global:
         misc:
           globalSidecarMode: cluster # inform the mode of global-sidecar

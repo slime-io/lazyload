@@ -17,8 +17,6 @@ spec:
         wormholePort:
           - "80"
           - "9080"
-        namespace:
-          - default
       global:
         misc:
           globalSidecarMode: cluster

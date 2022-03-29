@@ -1,10 +1,12 @@
 - [Lazyload Turotails](#lazyload-turotails)
   - [Architecture](#architecture)
   - [Install-and-Use](#install-and-use)
-    - [cluster + accesslog](#cluster--accesslog)
-    - [cluster + prometheus](#cluster--prometheus)
-    - [namespace+accesslog](#namespaceaccesslog)
-    - [namespace+prometheus](#namespaceprometheus)
+    - [Cluster Mode](#cluster-mode)
+      - [Accesslog](#accesslog)
+      - [Prometheus](#prometheus)
+    - [Namespace Mode](#namespace-mode)
+      - [Accesslog](#accesslog-1)
+      - [Prometheus](#prometheus-1)
   - [Introduction of features](#introduction-of-features)
     - [Enable lazyload based on accesslog](#enable-lazyload-based-on-accesslog)
     - [Automatic ServiceFence generation based on namespace/service label](#automatic-servicefence-generation-based-on-namespaceservice-label)
@@ -123,9 +125,13 @@ Depending on how the global-sidecar is deployed and the source of the metrics on
 
 
 
-### cluster + accesslog
+### Cluster Mode
 
-This mode deploys a global-sidecar application, in the namespace of the lazyload controller, defaulting to mesh-operator. The source of the metrics is the global-sidecar's accesslog.
+In this mode, all namespaces in the service mesh can use Lazyload, no need to explicitly specify a list of namespace like the namespace mode. This mode deploys a global-sidecar application, in the namespace of the lazyload controller, defaulting to mesh-operator. 
+
+#### Accesslog
+
+The source of the metrics is the global-sidecar's accesslog.
 
 > [Full Example](./install/samples/lazyload/slimeboot_cluster_accesslog.yaml)
 
@@ -148,8 +154,6 @@ spec:
       general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
-        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
-          - {{your_namespace}}
       global:
         misc:
           globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
@@ -177,9 +181,9 @@ spec:
 
 
 
-### cluster + prometheus
+#### Prometheus
 
-This mode deploys a global-sidecar application, in the namespace of the lazyload controller, defaulting to mesh-operator. The source of the metrics is Prometheus.
+The source of the metrics is Prometheus.
 
 > [Full Example](./install/samples/lazyload/slimeboot_cluster_prometheus.yaml)
 
@@ -202,8 +206,6 @@ spec:
       general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
-        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
-          - {{your_namespace}}
       global:
         misc:
           globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
@@ -238,9 +240,13 @@ spec:
 
 
 
-### namespace+accesslog
+### Namespace Mode
 
-This pattern deploys a global-sidecar application in each namespace where lazyload is intended to be used. Underwriting requests for each namespace are sent to the global-sidecar application under the same namespace. The source of the metrics is the global-sidecar's accesslog.
+This pattern deploys a global-sidecar application in each namespace where lazyload is intended to be used. Underwriting requests for each namespace are sent to the global-sidecar application under the same namespace. 
+
+#### Accesslog
+
+The source of the metrics is the global-sidecar's accesslog.
 
 > [Full Example](./install/samples/lazyload/slimeboot_namespace_accesslog.yaml)
 
@@ -291,9 +297,9 @@ spec:
 
 
 
-### namespace+prometheus
+#### Prometheus
 
-This pattern deploys a global-sidecar application in each namespace where lazyload is intended to be enabled. Underwriting requests for each namespace are sent to the global-sidecar application under the same namespace. The source of the metrics is Prometheus.
+The source of the metrics is Prometheus.
 
 >[Full Example](./install/samples/lazyload/slimeboot_namespace_prometheus.yaml)
 
