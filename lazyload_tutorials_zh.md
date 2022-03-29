@@ -1,10 +1,12 @@
 - [懒加载教程](#懒加载教程)
   - [架构](#架构)
   - [安装和使用](#安装和使用)
-    - [cluster + accesslog](#cluster--accesslog)
-    - [cluster + prometheus](#cluster--prometheus)
-    - [namespace+accesslog](#namespaceaccesslog)
-    - [namespace+prometheus](#namespaceprometheus)
+    - [Cluster模式](#cluster模式)
+      - [Accesslog](#accesslog)
+      - [Prometheus](#prometheus)
+    - [Namespace模式](#namespace模式)
+      - [accesslog metric](#accesslog-metric)
+      - [prometheus metric](#prometheus-metric)
   - [特性介绍](#特性介绍)
     - [基于Accesslog开启懒加载](#基于accesslog开启懒加载)
     - [基于namespace/service label自动生成ServiceFence](#基于namespaceservice-label自动生成servicefence)
@@ -122,11 +124,15 @@ spec:
 
 根据global-sidecar部署方式与服务依赖的指标的来源不同，可分为四种模式。
 
+### Cluster模式
 
+在该模式下，服务网格中的所有namespace都可以使用懒加载，无需像Namespace模式一样，显式指定使用懒加载的命令空间列表。
 
-### cluster + accesslog
+该模式会部署一个global-sidecar应用，位于lazyload controller的namespace下，默认为mesh-operator。所有兜底请求都会发到这个global-sidecar应用。
 
-该模式会部署一个global-sidecar应用，位于lazyload controller的namespace下，默认为mesh-operator。所有兜底请求都会发到这个global-sidecar应用。指标来源为global-sidecar的accesslog。
+#### Accesslog
+
+指标来源为global-sidecar的accesslog。
 
 > [完整样例](./install/samples/lazyload/slimeboot_cluster_accesslog.yaml)
 
@@ -149,8 +155,6 @@ spec:
       general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
-        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
-          - {{your_namespace}}
       global:
         misc:
           globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
@@ -178,9 +182,9 @@ spec:
 
 
 
-### cluster + prometheus
+#### Prometheus
 
-该模式会部署一个global-sidecar应用，位于lazyload controller的namespace下，默认为mesh-operator。所有兜底请求都会发到这个global-sidecar应用。指标来源为Prometheus。
+指标来源为Prometheus。
 
 > [完整样例](./install/samples/lazyload/slimeboot_cluster_prometheus.yaml)
 
@@ -203,8 +207,6 @@ spec:
       general: # replace previous "fence" field
         wormholePort: # replace to your application service ports, and extend the list in case of multi ports
           - "{{your_port}}"
-        namespace: # replace to your service's namespace which will use lazyload, and extend the list in case of multi namespaces
-          - {{your_namespace}}
       global:
         misc:
           globalSidecarMode: cluster # inform the lazyload controller of the global-sidecar mode
@@ -239,9 +241,13 @@ spec:
 
 
 
-### namespace+accesslog
+### Namespace模式
 
-该模式会在每个打算启用懒加载的namespace下部署一个global-sidecar应用。每个namespace的兜底请求都会发到同namespace下的global-sidecar应用。指标来源为global-sidecar的accesslog。
+该模式需要显式指定使用懒加载的命名空间列表，位置是SlimeBoot的`spec.module.general.namespace`。该模式会在每个打算启用懒加载的namespace下部署一个global-sidecar应用。每个namespace的兜底请求都会发到同namespace下的global-sidecar应用。
+
+#### accesslog metric
+
+指标来源为global-sidecar的accesslog。
 
 > [完整样例](./install/samples/lazyload/slimeboot_namespace_accesslog.yaml)
 
@@ -292,9 +298,9 @@ spec:
 
 
 
-### namespace+prometheus
+#### prometheus metric
 
-该模式会在每个打算启用懒加载的namespace下部署一个global-sidecar应用。每个namespace的兜底请求都会发到同namespace下的global-sidecar应用。指标来源为Prometheus。
+指标来源为Prometheus。
 
 >[完整样例](./install/samples/lazyload/slimeboot_namespace_prometheus.yaml)
 

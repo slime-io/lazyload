@@ -17,11 +17,12 @@
 ## Features
 
 1. Supports 1.8+ versions of Istio, without invasiveness, details at [recommended versions of istio](https://github.com/slime-io/lazyload/issues/26)
-2. Forwarding process supports all Istio traffic capabilities
-3. Independent of the number of services, no performance issues
-4. Flexible enabled lazyload with support for Namespace, Service and other dimensions
-5. Support for dynamic service dependency acquisition methods such as Accesslog and Prometheus
-6. Support for adding static service dependencies, a combination of dynamic and static dependencies, comprehensive functionality
+2. all namespaces in mesh can use Lazyload
+3. Forwarding process supports all Istio traffic capabilities
+4. Independent of the number of services, no performance issues
+5. Flexible enabled lazyload with support for Namespace, Service and other dimensions
+6. Support for dynamic service dependency acquisition methods such as Accesslog and Prometheus
+7. Support for adding static service dependencies, a combination of dynamic and static dependencies, comprehensive functionality
 
 
 
@@ -75,7 +76,7 @@ Details at [Install&Use](./lazyload_tutorials.md#install-and-use)
 
 
 ## Introduction of features
-- Enable lazyload based on accesslog
+- Support using lazyload based on accesslog
 - Automatic ServiceFence generation based on namespace/service label
 - Custom undefined traffic dispatch
 - Support for adding static service dependencies
