@@ -268,7 +268,7 @@ spec:
           virtual_hosts:
             - domains:
                 - '*'
-              name: allow_any
+              name: allow_any_new
               routes:
                 - match:
                     prefix: /
