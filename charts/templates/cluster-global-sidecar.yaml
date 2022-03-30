@@ -271,7 +271,7 @@ spec:
               source_code:
                 inline_string: |
                   function envoy_on_request(request_handle)
-                    request_handle:headers():add("Slime-Source-Ns", os.getenv("POD_NAMESPACE"))
+                    request_handle:headers():replace("Slime-Source-Ns", os.getenv("POD_NAMESPACE"))
                   end
     - applyTo: VIRTUAL_HOST
       match:
