@@ -140,7 +140,7 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 		log.Debugf("initCache is %+v", initCache)
 
 		// make preparation for handler
-		ipToSvcCache, cacheLock, err := newIpToSvcCache(env.K8SClient)
+		ipToSvcCache, svcToIpsCache, cacheLock, err := newIpToSvcCache(env.K8SClient)
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +152,7 @@ func newProducerConfig(env bootstrap.Environment) (*metric.ProducerConfig, error
 				{
 					Name: AccessLogConvertorName,
 					Handler: func(logEntry []*data_accesslog.HTTPAccessLogEntry) (map[string]map[string]string, error) {
-						return accessLogHandler(logEntry, ipToSvcCache, cacheLock)
+						return accessLogHandler(logEntry, ipToSvcCache, svcToIpsCache, cacheLock)
 					},
 					InitCache: initCache,
 				},
@@ -255,7 +255,9 @@ func newInitCache(env bootstrap.Environment) (map[string]map[string]string, erro
 	return result, nil
 }
 
-func accessLogHandler(logEntry []*data_accesslog.HTTPAccessLogEntry, ipToSvcCache map[string]string, cacheLock *sync.RWMutex) (map[string]map[string]string, error) {
+func accessLogHandler(logEntry []*data_accesslog.HTTPAccessLogEntry, ipToSvcCache map[string]string,
+	svcToIpsCache map[string][]string, cacheLock *sync.RWMutex,
+) (map[string]map[string]string, error) {
 	log := log.WithField("reporter", "accesslog convertor").WithField("function", "accessLogHandler")
 	result := make(map[string]map[string]string)
 
@@ -282,7 +284,7 @@ func accessLogHandler(logEntry []*data_accesslog.HTTPAccessLogEntry, ipToSvcCach
 		}
 
 		// fetch destinationSvcMeta
-		destinationSvc := spliceDestinationSvc(entry, sourceSvc)
+		destinationSvc := spliceDestinationSvc(entry, sourceSvc, svcToIpsCache, cacheLock)
 		if destinationSvc == "" {
 			continue
 		}
@@ -339,7 +341,7 @@ func spliceSourceSvc(sourceIp string, ipToSvcCache map[string]string, cacheLock 
 	return "", nil
 }
 
-func spliceDestinationSvc(entry *data_accesslog.HTTPAccessLogEntry, sourceSvc string) string {
+func spliceDestinationSvc(entry *data_accesslog.HTTPAccessLogEntry, sourceSvc string, svcToIpsCache map[string][]string, cacheLock *sync.RWMutex) string {
 	log := log.WithField("reporter", "accesslog convertor").WithField("function", "spliceDestinationSvc")
 	var destSvc string
 	upstreamCluster := entry.CommonProperties.UpstreamCluster
@@ -362,21 +364,37 @@ func spliceDestinationSvc(entry *data_accesslog.HTTPAccessLogEntry, sourceSvc st
 		srcParts := strings.Split(sourceSvc, "/")
 		destSvc = dest + "." + srcParts[0] + ".svc.cluster.local"
 	case 2:
-		destSvc = dest + ".svc.cluster.local"
+		destSvc = completeDestSvcName(destParts, dest, "svc.cluster.local", svcToIpsCache, cacheLock)
 	case 3:
-		destSvc = dest + ".cluster.local"
-	case 5:
-		destSvc = dest
+		if destParts[2] == "svc" {
+			destSvc = completeDestSvcName(destParts, dest, "cluster.local", svcToIpsCache, cacheLock)
+		} else {
+			destSvc = dest
+		}
 	default:
-		log.Errorf("%s is invalid request authority, skip", auth)
-		return ""
+		destSvc = dest
 	}
 
 	log.Debugf("DestinationSvc is: %s", "{destination_service=\""+destSvc+"\"}")
 	return "{destination_service=\"" + destSvc + "\"}"
 }
 
-func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, *sync.RWMutex, error) {
+func completeDestSvcName(destParts []string, dest, suffix string, svcToIpsCache map[string][]string, cacheLock *sync.RWMutex) (destSvc string) {
+	cacheLock.RLock()
+	defer cacheLock.RUnlock()
+
+	svc := destParts[1] + "/" + destParts[0]
+	if _, ok := svcToIpsCache[svc]; ok {
+		// dest is abbreviation of service, add suffix
+		destSvc = dest + suffix
+	} else {
+		// not abbreviation of service, no suffix
+		destSvc = dest
+	}
+	return
+}
+
+func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, map[string][]string, *sync.RWMutex, error) {
 	log := log.WithField("reporter", "AccessLogConvertor").WithField("function", "generateSvcToIpsCache")
 	ipToSvcCache := make(map[string]string)
 	svcToIpsCache := make(map[string][]string)
@@ -385,7 +403,7 @@ func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, *sync.
 	// init svcToIps
 	eps, err := clientSet.CoreV1().Endpoints("").List(metav1.ListOptions{})
 	if err != nil {
-		return nil, nil, stderrors.New("failed to get endpoints list")
+		return nil, nil, nil, stderrors.New("failed to get endpoints list")
 	}
 
 	for _, ep := range eps.Items {
@@ -463,5 +481,5 @@ func newIpToSvcCache(clientSet *kubernetes.Clientset) (map[string]string, *sync.
 		}
 	}()
 
-	return ipToSvcCache, &cacheLock, nil
+	return ipToSvcCache, svcToIpsCache, &cacheLock, nil
 }
