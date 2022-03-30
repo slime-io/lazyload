@@ -533,30 +533,15 @@ func addDomainsWithMetricStatus(domains map[string]*lazyloadv1alpha1.Destination
 		}
 		// destination_service format like: "grafana.istio-system.svc.cluster.local"
 
-		var h, fullHost string
+		var fullHost string
 		// trim ""
 		if ss := strings.Split(metricName, "\""); len(ss) != 3 {
 			continue
 		} else {
 			// remove port
-			h = strings.SplitN(ss[1], ":", 2)[0]
+			fullHost = strings.SplitN(ss[1], ":", 2)[0]
 		}
 
-		fullHost = h
-		subDomains := strings.Split(h, ".")
-		switch len(subDomains) {
-		// full service name, like "reviews.default.svc.cluster.local", needs no action
-		case 5:
-		// short service name without namespace, like "reviews", needs to add namespace of servicefence and "svc.cluster.local"
-		case 1:
-			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], sf.Namespace)
-		// short service name with namespace, like "reviews.default", needs to add "svc.cluster.local"
-		case 2:
-			fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", subDomains[0], subDomains[1])
-		default:
-			log.Errorf("%s is invalid host, skip", h)
-			continue
-		}
 		if !isValidHost(fullHost) {
 			continue
 		}
