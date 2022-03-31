@@ -375,7 +375,7 @@ func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *l
 			// handle namespace level host, like 'default/*'
 			handleNsHost(h, domains, nsSvcCache)
 		} else {
-			// handle service level host, like 'a.default.svc.cluster.local' or 'a' or 'a.default'
+			// handle service level host, like 'a.default.svc.cluster.local' or 'www.netease.com'
 			handleSvcHost(h, strategy, checkStatus, domains, sf)
 		}
 	}
@@ -424,27 +424,12 @@ func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, n
 	}
 }
 
-func handleSvcHost(h string, strategy *lazyloadv1alpha1.RecyclingStrategy,
+func handleSvcHost(fullHost string, strategy *lazyloadv1alpha1.RecyclingStrategy,
 	checkStatus func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status,
 	domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
 ) {
 	now := time.Now().Unix()
 
-	fullHost := h
-	hostParts := strings.Split(h, ".")
-	switch len(hostParts) {
-	// full service name, like "reviews.default.svc.cluster.local", needs no action
-	case 5:
-	// short service name without namespace, like "reviews", needs to add namespace of servicefence and "svc.cluster.local"
-	case 1:
-		fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", hostParts[0], sf.Namespace)
-	// short service name with namespace, like "reviews.default", needs to add "svc.cluster.local"
-	case 2:
-		fullHost = fmt.Sprintf("%s.%s.svc.cluster.local", hostParts[0], hostParts[1])
-	default:
-		log.Errorf("%s is invalid host, skip", h)
-		return
-	}
 	if !isValidHost(fullHost) {
 		return
 	}
