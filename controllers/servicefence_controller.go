@@ -65,6 +65,7 @@ type ServicefenceReconciler struct {
 	nsSvcCache           *NsSvcCache
 	labelSvcCache        *LabelSvcCache
 	defaultAddNamespaces []string
+	doAliasRules         []*domainAliasRule
 }
 
 // NewReconciler returns a new reconcile.Reconciler
@@ -89,6 +90,7 @@ func NewReconciler(cfg *lazyloadv1alpha1.Fence, mgr manager.Manager, env bootstr
 		staleNamespaces:      map[string]bool{},
 		enabledNamespaces:    map[string]bool{},
 		defaultAddNamespaces: []string{env.Config.Global.IstioNamespace, env.Config.Global.SlimeNamespace},
+		doAliasRules:         newDomainAliasRules(cfg.DomainAliases),
 	}
 
 	// start service related cache
@@ -308,7 +310,7 @@ func parseHost(sourceNs, h string) *types.NamespacedName {
 }
 
 func (r *ServicefenceReconciler) updateVisitedHostStatus(sf *lazyloadv1alpha1.ServiceFence) Diff {
-	domains := r.genDomains(sf)
+	domains := r.genDomains(sf, r.doAliasRules)
 
 	delta := Diff{
 		Deleted: make([]string, 0),
@@ -340,18 +342,20 @@ func (r *ServicefenceReconciler) updateVisitedHostStatus(sf *lazyloadv1alpha1.Se
 	return delta
 }
 
-func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence) map[string]*lazyloadv1alpha1.Destinations {
+func (r *ServicefenceReconciler) genDomains(sf *lazyloadv1alpha1.ServiceFence, rules []*domainAliasRule) map[string]*lazyloadv1alpha1.Destinations {
 	domains := make(map[string]*lazyloadv1alpha1.Destinations)
 
-	addDomainsWithHost(domains, sf, r.nsSvcCache)
-	addDomainsWithLabelSelector(domains, sf, r.labelSvcCache)
-	addDomainsWithMetricStatus(domains, sf)
+	addDomainsWithHost(domains, sf, r.nsSvcCache, rules)
+	addDomainsWithLabelSelector(domains, sf, r.labelSvcCache, rules)
+	addDomainsWithMetricStatus(domains, sf, rules)
 
 	return domains
 }
 
 // update domains with spec.host
-func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence, nsSvcCache *NsSvcCache) {
+func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence, nsSvcCache *NsSvcCache,
+	rules []*domainAliasRule,
+) {
 	checkStatus := func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status {
 		switch {
 		case strategy.Stable != nil:
@@ -373,15 +377,15 @@ func addDomainsWithHost(domains map[string]*lazyloadv1alpha1.Destinations, sf *l
 	for h, strategy := range sf.Spec.Host {
 		if strings.HasSuffix(h, "/*") {
 			// handle namespace level host, like 'default/*'
-			handleNsHost(h, domains, nsSvcCache)
+			handleNsHost(h, domains, nsSvcCache, rules)
 		} else {
 			// handle service level host, like 'a.default.svc.cluster.local' or 'www.netease.com'
-			handleSvcHost(h, strategy, checkStatus, domains, sf)
+			handleSvcHost(h, strategy, checkStatus, domains, sf, rules)
 		}
 	}
 }
 
-func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, nsSvcCache *NsSvcCache) {
+func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, nsSvcCache *NsSvcCache, rules []*domainAliasRule) {
 	hostParts := strings.Split(h, "/")
 	if len(hostParts) != 2 {
 		log.Errorf("%s is invalid host, skip", h)
@@ -399,23 +403,27 @@ func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, n
 		if !isValidHost(fullHost) {
 			continue
 		}
-		if domains[fullHost] != nil {
-			continue
-		}
-		// service relates to other services
-		if hs := getDestination(fullHost); len(hs) > 0 {
-			for i := 0; i < len(hs); {
-				hParts := strings.Split(hs[i], ".")
-				// ignore destSvc that in the same namespace
-				if hParts[1] == hostParts[0] {
-					hs[i], hs[len(hs)-1] = hs[len(hs)-1], hs[i]
-					hs = hs[:len(hs)-1]
-				} else {
-					i++
-				}
-			}
 
-			allHost = append(allHost, hs...)
+		fullHosts := domainAddAlias(fullHost, rules)
+		for _, fh := range fullHosts {
+			if domains[fh] != nil {
+				continue
+			}
+			// service relates to other services
+			if hs := getDestination(fh); len(hs) > 0 {
+				for i := 0; i < len(hs); {
+					hParts := strings.Split(hs[i], ".")
+					// ignore destSvc that in the same namespace
+					if hParts[1] == hostParts[0] {
+						hs[i], hs[len(hs)-1] = hs[len(hs)-1], hs[i]
+						hs = hs[:len(hs)-1]
+					} else {
+						i++
+					}
+				}
+
+				allHost = append(allHost, hs...)
+			}
 		}
 	}
 	domains[h] = &lazyloadv1alpha1.Destinations{
@@ -426,31 +434,35 @@ func handleNsHost(h string, domains map[string]*lazyloadv1alpha1.Destinations, n
 
 func handleSvcHost(fullHost string, strategy *lazyloadv1alpha1.RecyclingStrategy,
 	checkStatus func(now int64, strategy *lazyloadv1alpha1.RecyclingStrategy) lazyloadv1alpha1.Destinations_Status,
-	domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
+	domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence, rules []*domainAliasRule,
 ) {
 	now := time.Now().Unix()
 
 	if !isValidHost(fullHost) {
 		return
 	}
-	if domains[fullHost] != nil {
-		return
-	}
 
-	allHost := []string{fullHost}
-	if hs := getDestination(fullHost); len(hs) > 0 {
-		allHost = append(allHost, hs...)
-	}
+	fullHosts := domainAddAlias(fullHost, rules)
+	for _, fh := range fullHosts {
+		if domains[fh] != nil {
+			return
+		}
 
-	domains[fullHost] = &lazyloadv1alpha1.Destinations{
-		Hosts:  allHost,
-		Status: checkStatus(now, strategy),
+		allHost := []string{fh}
+		if hs := getDestination(fh); len(hs) > 0 {
+			allHost = append(allHost, hs...)
+		}
+
+		domains[fh] = &lazyloadv1alpha1.Destinations{
+			Hosts:  allHost,
+			Status: checkStatus(now, strategy),
+		}
 	}
 }
 
 // update domains with spec.labelSelector
 func addDomainsWithLabelSelector(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence,
-	labelSvcCache *LabelSvcCache,
+	labelSvcCache *LabelSvcCache, rules []*domainAliasRule,
 ) {
 	labelSvcCache.RLock()
 	defer labelSvcCache.RUnlock()
@@ -493,16 +505,10 @@ func addDomainsWithLabelSelector(domains map[string]*lazyloadv1alpha1.Destinatio
 			if !isValidHost(fullHost) {
 				continue
 			}
-			if domains[fullHost] != nil {
-				continue
-			}
-			allHost := []string{fullHost}
-			if hs := getDestination(fullHost); len(hs) > 0 {
-				allHost = append(allHost, hs...)
-			}
-			domains[fullHost] = &lazyloadv1alpha1.Destinations{
-				Hosts:  allHost,
-				Status: lazyloadv1alpha1.Destinations_ACTIVE,
+
+			fullHosts := domainAddAlias(fullHost, rules)
+			for _, fh := range fullHosts {
+				addToDomains(domains, fh)
 			}
 		}
 
@@ -510,7 +516,7 @@ func addDomainsWithLabelSelector(domains map[string]*lazyloadv1alpha1.Destinatio
 }
 
 // update domains with Status.MetricStatus
-func addDomainsWithMetricStatus(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence) {
+func addDomainsWithMetricStatus(domains map[string]*lazyloadv1alpha1.Destinations, sf *lazyloadv1alpha1.ServiceFence, rules []*domainAliasRule) {
 	for metricName := range sf.Status.MetricStatus {
 		metricName = strings.Trim(metricName, "{}")
 		if !strings.HasPrefix(metricName, "destination_service") && !strings.HasPrefix(metricName, "request_host") {
@@ -530,18 +536,10 @@ func addDomainsWithMetricStatus(domains map[string]*lazyloadv1alpha1.Destination
 		if !isValidHost(fullHost) {
 			continue
 		}
-		if domains[fullHost] != nil { // XXX merge with status from config
-			continue
-		}
 
-		allHost := []string{fullHost}
-		if hs := getDestination(fullHost); len(hs) > 0 {
-			allHost = append(allHost, hs...)
-		}
-
-		domains[fullHost] = &lazyloadv1alpha1.Destinations{
-			Hosts:  allHost,
-			Status: lazyloadv1alpha1.Destinations_ACTIVE,
+		fullHosts := domainAddAlias(fullHost, rules)
+		for _, fh := range fullHosts {
+			addToDomains(domains, fh)
 		}
 	}
 }

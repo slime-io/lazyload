@@ -15,6 +15,7 @@
       - [依赖某个服务](#依赖某个服务)
       - [依赖某个namespace所有服务](#依赖某个namespace所有服务)
       - [依赖具有某个label的所有服务](#依赖具有某个label的所有服务)
+    - [支持自定义服务依赖别名](#支持自定义服务依赖别名)
     - [日志输出到本地并轮转](#日志输出到本地并轮转)
       - [创建存储卷](#创建存储卷)
       - [在SlimeBoot中声明挂载信息](#在slimeboot中声明挂载信息)
@@ -591,6 +592,92 @@ spec:
     - '*/reviews.default.svc.cluster.local' # with label "app=details" and "group=default"
     - istio-system/*
     - mesh-operator/*
+```
+
+
+
+
+
+### 支持自定义服务依赖别名
+
+在某些场景，我们希望懒加载根据已知的服务依赖，添加一些额外的服务依赖进去。
+
+用户可以通过配置`general.domainAliases`，提供自定义的转换关系，实现需求。`general.domainAliases`包含多个`domainAlias`，每个`domainAlias`由匹配规则`pattern`和转换规则`templates`组成。`pattern`只包含一个匹配规则，`templates`则可以包含多个转换规则。
+
+举个例子，我们希望添加`<svc>.<ns>.svc.cluster.local`时，额外添加`<ns>.<svc>.mailsaas`的服务依赖，则可以这么配置
+
+```yaml
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  module:
+    - name: lazyload-test
+      kind: lazyload
+      enable: true
+      general:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "9080"
+        domainAliases: 
+          - pattern: '(?P<service>[^\.]+)\.(?P<namespace>[^\.]+)\.svc\.cluster\.local$'
+            templates:
+              - "$namespace.$service.mailsaas"
+  #...
+```
+
+对应的servicefence会这样
+
+```yaml
+apiVersion: microservice.slime.io/v1alpha1
+kind: ServiceFence
+metadata:
+  name: ratings
+  namespace: default
+spec:
+  enable: true
+  host:
+    details.default.svc.cluster.local: # static dependent service
+      stable: {}
+status:
+  domains:
+    default.details.mailsaas: # static dependent service converted result
+      hosts:
+      - default.details.mailsaas
+    default.productpage.mailsaas: # dynamic dependent service converted result
+      hosts:
+      - default.productpage.mailsaas
+    details.default.svc.cluster.local:
+      hosts:
+      - details.default.svc.cluster.local
+    productpage.default.svc.cluster.local:
+      hosts:
+      - productpage.default.svc.cluster.local
+  metricStatus:
+    '{destination_service="productpage.default.svc.cluster.local"}': "1" # dynamic dependent service
+```
+
+sidecar则是这样
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: ratings
+  namespace: default
+spec:
+  egress:
+  - hosts:
+    - '*/default.details.mailsaas' # static dependent service converted result
+    - '*/default.productpage.mailsaas' # dynamic dependent service converted result
+    - '*/details.default.svc.cluster.local'
+    - '*/productpage.default.svc.cluster.local'
+    - istio-system/*
+    - mesh-operator/*
+  workloadSelector:
+    labels:
+      app: ratings
 ```
 
 

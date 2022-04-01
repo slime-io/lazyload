@@ -80,6 +80,7 @@ Details at [Install&Use](./lazyload_tutorials.md#install-and-use)
 - Automatic ServiceFence generation based on namespace/service label
 - Custom undefined traffic dispatch
 - Support for adding static service dependencies
+- Support for custom service dependency aliases
 - Log output to local file and rotate
 
 Details at [Introduction of features](./lazyload_tutorials.md#Introduction-of-features)

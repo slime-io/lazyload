@@ -84,6 +84,7 @@
 - 基于namespace/service label自动生成ServiceFence
 - 支持自定义兜底流量分派
 - 支持添加静态服务依赖关系
+- 支持自定义服务依赖别名
 - 日志输出到本地并轮转
 
 详见 [特性介绍](./lazyload_tutorials_zh.md#%E7%89%B9%E6%80%A7%E4%BB%8B%E7%BB%8D)

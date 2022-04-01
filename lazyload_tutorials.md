@@ -15,6 +15,7 @@
       - [Dependency on specific services](#dependency-on-specific-services)
       - [Dependency on all services in  specific namespaces](#dependency-on-all-services-in--specific-namespaces)
       - [Dependency on all services with specific labels](#dependency-on-all-services-with-specific-labels)
+    - [Support for custom service dependency aliases](#Support for custom service dependency aliases)
     - [Logs output to local file and rotate](#logs-output-to-local-file-and-rotate)
       - [Creating Storage Volumes](#creating-storage-volumes)
       - [Declaring mount information in SlimeBoot](#declaring-mount-information-in-slimeboot)
@@ -597,6 +598,92 @@ spec:
     - '*/reviews.default.svc.cluster.local' # with label "app=details" and "group=default"
     - istio-system/*
     - mesh-operator/*
+```
+
+
+
+
+
+### Support for custom service dependency aliases
+
+In some scenarios, we want Lazyload to add some additional dependent services in based on the known dependent service.
+
+Users can configure `general.domainAliases` to provide custom conversion relationships to achieve the requirements. `general.domainAliases` consists of one or many `domainAlias`. `domainAlias` consists of a matching rule `pattern` and a transformation rule `templates`.  `pattern` contains only one matching rule, while `templates` can contain multiple conversion rules.
+
+For example, we want to add `<svc>. <ns>.svc.cluster.local` with an additional `<ns>. <svc>.mailsaas` service dependency, you can configure it like this
+
+```yaml
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  module:
+    - name: lazyload-test
+      kind: lazyload
+      enable: true
+      general:
+        wormholePort: # replace to your application service ports, and extend the list in case of multi ports
+          - "9080"
+        domainAliases: 
+          - pattern: '(?P<service>[^\.]+)\.(?P<namespace>[^\.]+)\.svc\.cluster\.local$'
+            templates:
+              - "$namespace.$service.mailsaas"
+  #...
+```
+
+Servicefence will look like this
+
+```yaml
+apiVersion: microservice.slime.io/v1alpha1
+kind: ServiceFence
+metadata:
+  name: ratings
+  namespace: default
+spec:
+  enable: true
+  host:
+    details.default.svc.cluster.local: # static dependent service
+      stable: {}
+status:
+  domains:
+    default.details.mailsaas: # static dependent service converted result
+      hosts:
+      - default.details.mailsaas
+    default.productpage.mailsaas: # dynamic dependent service converted result
+      hosts:
+      - default.productpage.mailsaas
+    details.default.svc.cluster.local:
+      hosts:
+      - details.default.svc.cluster.local
+    productpage.default.svc.cluster.local:
+      hosts:
+      - productpage.default.svc.cluster.local
+  metricStatus:
+    '{destination_service="productpage.default.svc.cluster.local"}': "1" # dynamic dependent service
+```
+
+Sidecar will look like this
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: ratings
+  namespace: default
+spec:
+  egress:
+  - hosts:
+    - '*/default.details.mailsaas' # static dependent service converted result
+    - '*/default.productpage.mailsaas' # dynamic dependent service converted result
+    - '*/details.default.svc.cluster.local'
+    - '*/productpage.default.svc.cluster.local'
+    - istio-system/*
+    - mesh-operator/*
+  workloadSelector:
+    labels:
+      app: ratings
 ```
 
 
