@@ -6,6 +6,7 @@
 package controllers
 
 import (
+	"regexp"
 	"sync"
 
 	"slime.io/slime/framework/model"
@@ -32,4 +33,10 @@ type NsSvcCache struct {
 type LabelSvcCache struct {
 	Data map[LabelItem]map[string]struct{}
 	sync.RWMutex
+}
+
+type domainAliasRule struct {
+	pattern   string
+	templates []string
+	re        *regexp.Regexp
 }

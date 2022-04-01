@@ -18,6 +18,8 @@ message Fence {
   repeated string namespace = 3;
   // custom outside dispatch traffic rules
   repeated Dispatch dispatches = 4;
+  // can convert to one or many domain alias rules
+  repeated DomainAlias domainAliases = 5;
 }
 
 // The general idea is to assign different default traffic to different targets
@@ -29,4 +31,16 @@ message Dispatch {
   repeated string domains = 2;
   // target cluster
   string cluster = 3;
+}
+
+// DomainAlias regexp expression, which is alias for target domain
+// default value is empty
+// example:
+// domainAliases:
+//   - pattern: (?P<service>[^\.]+)\.(?P<namespace>[^\.]+)\.svc\.cluster\.local$
+//     template:
+//       - $namespace.$service.service.mailsaas
+message DomainAlias {
+  string pattern = 1;
+  repeated string templates = 2;
 }
