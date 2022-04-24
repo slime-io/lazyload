@@ -30,7 +30,7 @@ spec:
     - name: http-{{ . }}
       port: {{ int . }}
       protocol: TCP
-      targetPort: 80
+      targetPort: {{ int . }}
     {{- end }}
   selector:
     app: global-sidecar
@@ -53,7 +53,7 @@ metadata:
   labels:
     app: global-sidecar
 spec:
-  replicas: 1
+  replicas: {{ $gs.replicas | default 1 }}
   selector:
     matchLabels:
       app: global-sidecar
@@ -95,6 +95,13 @@ spec:
       serviceAccountName: global-sidecar
       containers:
         - name: global-sidecar
+          env:
+            - name: PROBE_PORT
+              value: {{ default 18181 $gs.probePort | quote }}
+            - name: LOG_LEVEL
+              value: {{ default "info" $g.log.logLevel }}
+            - name: WORMHOLE_PORTS
+              value: {{ join "," $f.wormholePort | quote }}
           {{- if $gs.image.tag }}
           image: "{{ $gs.image.repository }}:{{ $gs.image.tag}}"
           {{- else }}
@@ -102,12 +109,15 @@ spec:
           {{- end }}
           imagePullPolicy: Always
           ports:
-            - containerPort: 80
+            {{- range $f.wormholePort }}
+            - containerPort: {{ int . }}
+              protocol: TCP
+            {{- end }}
           livenessProbe:
             failureThreshold: 3
             httpGet:
               path: /healthz/live
-              port: 8080
+              port: {{ default 18181 $gs.probePort }}
               scheme: HTTP
             initialDelaySeconds: 600
             periodSeconds: 30
@@ -117,7 +127,7 @@ spec:
             failureThreshold: 30
             httpGet:
               path: /healthz/ready
-              port: 8080
+              port: {{ default 18181 $gs.probePort }}
               scheme: HTTP
             initialDelaySeconds: 1
             periodSeconds: 2
