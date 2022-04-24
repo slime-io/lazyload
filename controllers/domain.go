@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"regexp"
+
 	lazyloadv1alpha1 "slime.io/slime/modules/lazyload/api/v1alpha1"
 )
 
@@ -25,7 +26,7 @@ func newDomainAliasRules(domainAlias []*lazyloadv1alpha1.DomainAlias) []*domainA
 			log.Errorf("domainAlias template is empty")
 			return nil
 		}
-		rule :=  &domainAliasRule{
+		rule := &domainAliasRule{
 			pattern:   pattern,
 			templates: templates,
 			re:        re,

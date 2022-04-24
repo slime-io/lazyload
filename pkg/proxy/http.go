@@ -28,36 +28,18 @@ func (p *HealthzProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-type Proxy struct{}
+type Proxy struct {
+	WormholePort int
+}
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var (
 		reqCtx               = req.Context()
 		reqHost              = req.Host
 		origDest, origDestIp string
-		origDestPort         = 80
+		origDestPort         = p.WormholePort
 	)
-
-	if values := req.Header[HeaderOrigDest]; len(values) > 0 {
-		origDest = values[0]
-		req.Header.Del(HeaderOrigDest)
-	}
-
-	if origDest == "" {
-		http.Error(w, "lack of header "+HeaderOrigDest, http.StatusBadRequest)
-		return
-	}
-	if idx := strings.LastIndex(origDest, ":"); idx >= 0 {
-		origDestIp = origDest[:idx]
-		if v, err := strconv.Atoi(origDest[idx+1:]); err != nil {
-			http.Error(w, fmt.Sprintf("invalid header %s value: %s", HeaderOrigDest, origDest), http.StatusBadRequest)
-			return
-		} else {
-			origDestPort = v
-		}
-	} else {
-		origDestIp = origDest
-	}
+	log.Debugf("proxy received request, reqHost: %s", reqHost)
 
 	// try to complete short name
 	if values := req.Header[HeaderSourceNs]; len(values) > 0 && values[0] != "" {
@@ -71,8 +53,35 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				reqHost = fmt.Sprintf("%s.%s", reqHost, ns)
 			}
 		}
+		log.Debugf("handle request header [Slime-Source-Ns]: %s", values[0])
 	}
-	log.Infof("received request, reqHost: %s", reqHost)
+
+	if values := req.Header[HeaderOrigDest]; len(values) > 0 {
+		origDest = values[0]
+		req.Header.Del(HeaderOrigDest)
+
+		if idx := strings.LastIndex(origDest, ":"); idx >= 0 {
+			origDestIp = origDest[:idx]
+			if v, err := strconv.Atoi(origDest[idx+1:]); err != nil {
+				http.Error(w, fmt.Sprintf("invalid header %s value: %s", HeaderOrigDest, origDest), http.StatusBadRequest)
+				return
+			} else {
+				origDestPort = v
+			}
+		} else {
+			origDestIp = origDest
+		}
+		log.Debugf("handle request header [Slime-Orig-Dest]: %s", values[0])
+	}
+
+	if origDest == "" {
+		if idx := strings.LastIndex(reqHost, ":"); idx >= 0 {
+			origDestIp = reqHost[:idx]
+		} else {
+			origDestIp = reqHost
+		}
+	}
+	log.Debugf("proxy forward request to: %s:%d", origDestIp, origDestPort)
 
 	if req.URL.Scheme == "" {
 		req.URL.Scheme = "http"

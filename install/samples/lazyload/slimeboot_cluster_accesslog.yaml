@@ -45,3 +45,4 @@ spec:
       image:
         repository: docker.io/slimeio/slime-global-sidecar
         tag: v0.2.0-1b93bf7
+      probePort: 8080
