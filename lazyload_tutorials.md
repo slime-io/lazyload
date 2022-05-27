@@ -394,40 +394,72 @@ spec:
 
 
 
-### Automatic ServiceFence generation based on namespace/service label
+### Support for enabling lazyload for services manually or automatically
 
-fence supports automatic generation based on label, i.e. you can define  **the scope of "fence enabled" functionality** by typing label `slime.io/serviceFenced`.
+Support for enabling lazyload for services, either manually or automatically, via the `autoFence` parameter. Enabling lazyload here refers to the creation of the serviceFence resource, which generates the Sidecar CR.
 
-* namespace level
+Support for specifying whether lazyload is globally enabled in automatic mode via the `defaultFence` parameter.
 
-  * `true`: Servicefence cr will be created for all services (without cr) under this namespace
-  * Other values: No action
+The configuration is as follows
 
-* service level
+```yaml
+---
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  module:
+    - name: lazyload
+      kind: lazyload
+      enable: true
+      general:
+        autoFence: true # true for automatic mode, false for manual mode, default for manual mode
+        defaultFence: true # Default behaviour in auto mode, true to create servicefence, false to not create, default not to create
+  # ...
+```
 
-  * `true`: generates servicefence cr for this service
-  * `false`: do not generate servicefence cr for this service
-
-  > All of the above will override the namespace level setting (label)
-
-  * other values: use namespace level configuration
 
 
+#### Auto mode
 
-For automatically generated servicefence cr, it will be recorded by the standard label `app.kubernetes.io/created-by=fence-controller`, which implements the state association change. Servicefence that do not match this label are currently considered manually configured and are not affected by the above labels.
+Auto mode is entered when the `autoFence` parameter is `true`. The range of services enabled for lazyload in auto mode is adjusted by three dimensions.
+
+Service Level - label `slime.io/serviceFenced`
+
+* `false`: not auto enable
+* `true`: auto enable
+
+* other values or empty: use namespace level configuration
+
+Namespace Level - label `slime.io/serviceFenced`
+
+* `false`: not auto enable for this namespace
+* `true`: auto enable for this namespace
+* other values or empty: use global level configuration
+
+Global Level - `defaultFence` param of lazyload module
+
+- `false`: not auto enable for all 
+- `true`: auto enable for all 
+
+Priority: Service Level > Namespace Level > Global Level
 
 
-**Note** Similarly, it is necessary to ensure that the globalSidecar corresponding to the ns is available, see the previous article for details
+
+Note: ServiceFence that are auto generated are labeled with `app.kubernetes.io/created-by=fence-controller`, which enables state association changes. ServiceFence that do not match this Label are considered to be manually configured and are not affected by the above Label.
+
 
 
 **Example**
 
-> namespace `testns` has three services under it: `svc1`, `svc2`, `svc3`
+> Namespace `testns` has 3 services, `svc1`, `svc2`, `svc3`
 
-* Label `testns` with `slime.io/serviceFenced=true`: Generate cr for the above three services
-* Label `svc2` with `slime.io/serviceFenced=false`: only the cr for `svc1`, `svc3` remain
-* Remove this label from `svc2`: restores three cr
-* Remove `app.kubernetes.io/created-by=fence-controller` from the cr of `svc3`; remove the label on `testns`: only the cr of `svc3` remains
+* When `autoFence` is `true` and `defaultFence` is `true`, three ServiceFence for the above services is auto generated
+* Label ns with `slime.io/serviceFenced: "false"`, all ServiceFence disappear
+* Label `svc1` with `slime.io/serviceFenced: "true"` ,  create ServiceFence for `svc1`
+* Delete the labels on Namespace and Service: created the three ServiceFence
 
 
 
@@ -437,29 +469,28 @@ For automatically generated servicefence cr, it will be recorded by the standard
 apiVersion: v1
 kind: Namespace
 metadata:
-  creationTimestamp: "2021-03-16T09:36:25Z"
   labels:
     istio-injection: enabled
-    slime.io/serviceFenced: "true"
+    slime.io/serviceFenced: "false"
   name: testns
-  resourceVersion: "79604437"
-  uid: 5a34b780-cd95-4e43-b706-94d89473db77
 ---
 apiVersion: v1
 kind: Service
 metadata:
   annotations: {}
   labels:
-    app: svc2
-    service: svc2
-    slime.io/serviceFenced: "false"
-  name: svc2
+    app: svc1
+    service: svc1
+    slime.io/serviceFenced: "true"
+  name: svc1
   namespace: testns
-  resourceVersion: "79604741"
-  uid: b36f04fe-18c6-4506-9d17-f91a81479dd2
 ```
 
 
+
+#### Manual mode
+
+When the `autoFence` parameter is `false`, lazyload is enabled in manual mode, requiring the user to create the ServiceFence resource manually. This enablement is Service level.
 
 
 

@@ -20,7 +20,7 @@
 2. all namespaces in mesh can use Lazyload
 3. Forwarding process supports all Istio traffic capabilities
 4. Independent of the number of services, no performance issues
-5. Flexible enabled lazyload with support for Namespace, Service and other dimensions
+5. Support for enabling lazyload for services manually or automatically
 6. Support for dynamic service dependency acquisition methods such as Accesslog and Prometheus
 7. Support for adding static service dependencies, a combination of dynamic and static dependencies, comprehensive functionality
 
@@ -76,8 +76,8 @@ Details at [Install&Use](./lazyload_tutorials.md#install-and-use)
 
 
 ## Introduction of features
-- Support using lazyload based on accesslog
-- Automatic ServiceFence generation based on namespace/service label
+- Support for using lazyload based on accesslog
+- Support for enabling lazyload for services manually or automatically
 - Custom undefined traffic dispatch
 - Support for adding static service dependencies
 - Support for custom service dependency aliases

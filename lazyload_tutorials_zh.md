@@ -393,38 +393,72 @@ spec:
 
 
 
-### 基于namespace/service label自动生成ServiceFence
+### 支持为服务手动或自动启用懒加载
 
-fence支持基于label的自动生成，也即可以通过打label `slime.io/serviceFenced`的方式来定义**”开启fence“功能的范围**。
+支持通过`autoFence`参数，指定启用懒加载是手动模式、自动模式。这里的启用懒加载，指的是创建serviceFence资源，从而生成Sidecar CR。
 
-* namespace级别
+支持通过`defaultFence`参数，指定自动模式下，是否全局启用懒加载。
 
-  * `true`： 会对该namespace下的所有（没有cr的）服务都创建servicefence cr
-  * 其他值： 无操作
+配置方式如下
 
-* service级别
+```yaml
+---
+apiVersion: config.netease.com/v1alpha1
+kind: SlimeBoot
+metadata:
+  name: lazyload
+  namespace: mesh-operator
+spec:
+  module:
+    - name: lazyload
+      kind: lazyload
+      enable: true
+      general:
+        autoFence: true # true为自动模式，false为手动模式，默认为手动模式
+        defaultFence: true # 自动模式下默认行为，true为创建servicefence，false为不创建，默认不创建
+  # ...
+```
 
-  * `true`： 对该服务生成servicefence cr
-  * `false`： 不对该服务生成servicefence cr
-
-  > 以上都会覆盖namespace级别设置（label）
-
-  * 其他值： 使用namespace级别配置
 
 
+#### 自动模式
 
-对于自动生成的servicefence cr，会通过标准label `app.kubernetes.io/created-by=fence-controller`来记录，实现了状态关联变更。 而不匹配该label的servicefence，目前视为手动配置，不受以上label影响。
+当`autoFence`参数为`true`时，进入自动模式。自动模式下，启用懒加载的服务范围，通过三个维度调整。
+
+Service级别 - label `slime.io/serviceFenced`
+
+* `false`： 不自动启用
+* `true`： 自动启用
+
+* 其他值或缺省： 使用Namespace级别配置
+
+Namespace级别 - label `slime.io/serviceFenced`
+
+* `false`： 该namespace下的所有服务都不自动启用
+* `true`：该namespace下的所有服务都自动启用
+* 其他值或缺省： 使用全局级别配置
+
+全局级别 - lazyload的`defaultFence`参数
+
+- `false`： 全局不自动启用
+- `true`：全局自动启用
+
+优先级：Service级别 > Namespace级别 > 全局级别
+
+
+
+注：对于自动生成的ServiceFence资源 ，会通过标准Label `app.kubernetes.io/created-by=fence-controller`来记录，实现了状态关联变更。 而不匹配该Label的ServiceFence资源，视为手动配置，不受以上Label影响。
 
 
 
 **举例**
 
-> namespace `testns`下有三个服务： `svc1`, `svc2`, `svc3`
+> Namespace `testns`下有三个服务： `svc1`, `svc2`, `svc3`
 
-* 给`testns`打上`slime.io/serviceFenced=true` label： 生成以上三个服务的cr
-* 给`svc2`打上 `slime.io/serviceFenced=false` label： 只剩下`svc1`, `svc3`这两个cr
-* 删掉`svc2`的该label：恢复三个cr
-* 去掉`svc3`的cr的`app.kubernetes.io/created-by=fence-controller`； 去掉`testns`上的label： 只剩下`svc3`的cr
+* 当`autoFence`为`true`且`defaultFence`为`true`时，自动生成以上三个服务的ServiceFence
+* 给Namespace testns加上Label `slime.io/serviceFenced: "false"`， 所有ServiceFence消失
+* 给`svc1`打上 `slime.io/serviceFenced: "true"` label： 服务`svc1`的ServiceFence创建
+* 删掉Namespace和Service上的label：恢复三个ServiceFence
 
 
 
@@ -436,7 +470,7 @@ kind: Namespace
 metadata:
   labels:
     istio-injection: enabled
-    slime.io/serviceFenced: "true"
+    slime.io/serviceFenced: "false"
   name: testns
 ---
 apiVersion: v1
@@ -444,12 +478,18 @@ kind: Service
 metadata:
   annotations: {}
   labels:
-    app: svc2
-    service: svc2
-    slime.io/serviceFenced: "false"
-  name: svc2
+    app: svc1
+    service: svc1
+    slime.io/serviceFenced: "true"
+  name: svc1
   namespace: testns
 ```
+
+
+
+#### 手动模式
+
+当`autoFence`参数为`false`时，启用懒加载为手动模式，需要用户手动创建ServiceFence资源。这种启用是Service级别的。
 
 
 
