@@ -105,6 +105,18 @@ func (r *ServicefenceReconciler) Refresh(req reconcile.Request, value map[string
 	return reconcile.Result{}, nil
 }
 
+func (r *ServicefenceReconciler) isNsFenced(ns *corev1.Namespace) bool {
+	if ns != nil && ns.Labels != nil {
+		switch ns.Labels[LabelServiceFenced] {
+		case ServiceFencedTrue:
+			return true
+		case ServiceFencedFalse:
+			return false
+		}
+	}
+	return r.cfg.DefaultFence
+}
+
 func (r *ServicefenceReconciler) isServiceFenced(ctx context.Context, svc *corev1.Service) bool {
 	var svcLabel string
 	if svc.Labels != nil {
@@ -131,8 +143,8 @@ func (r *ServicefenceReconciler) isServiceFenced(ctx context.Context, svc *corev
 				}
 			}
 
-			if ns != nil && ns.Labels != nil {
-				return ns.Labels[LabelServiceFenced] == ServiceFencedTrue
+			if ns != nil {
+				return r.isNsFenced(ns)
 			}
 		}
 		return r.enabledNamespaces[svc.Namespace]
@@ -151,9 +163,14 @@ func (r *ServicefenceReconciler) ReconcileService(req ctrl.Request) (ctrl.Result
 func (r *ServicefenceReconciler) ReconcileNamespace(req ctrl.Request) (ret ctrl.Result, err error) {
 	ctx := context.TODO()
 
-	// Fetch the Service instance
+	// Fetch the namespace instance
 	ns := &corev1.Namespace{}
 	err = r.Client.Get(ctx, req.NamespacedName, ns)
+
+	if ns.Name == r.env.Config.Global.IstioNamespace || ns.Name == r.env.Config.Global.SlimeNamespace {
+		log.Debugf("auto fence does not apply to istio and slime namespace, skip")
+		return reconcile.Result{}, nil
+	}
 
 	r.reconcileLock.Lock()
 	defer r.reconcileLock.Unlock()
@@ -175,12 +192,8 @@ func (r *ServicefenceReconciler) ReconcileNamespace(req ctrl.Request) (ret ctrl.
 		}
 	}
 
-	var nsLabel string
-	if ns.Labels != nil {
-		nsLabel = ns.Labels[LabelServiceFenced]
-	}
+	nsFenced := r.isNsFenced(ns)
 
-	nsFenced := nsLabel == ServiceFencedTrue
 	if nsFenced == r.enabledNamespaces[req.Name] {
 		return reconcile.Result{}, nil
 	} else {

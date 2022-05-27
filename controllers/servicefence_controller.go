@@ -91,6 +91,7 @@ func NewReconciler(cfg *lazyloadv1alpha1.Fence, mgr manager.Manager, env bootstr
 		enabledNamespaces:    map[string]bool{},
 		defaultAddNamespaces: []string{env.Config.Global.IstioNamespace, env.Config.Global.SlimeNamespace},
 		doAliasRules:         newDomainAliasRules(cfg.DomainAliases),
+		cfg:                  cfg,
 	}
 
 	// start service related cache
