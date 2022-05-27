@@ -59,7 +59,7 @@ func (mo *Module) InitManager(mgr manager.Manager, env bootstrap.Environment, cb
 	var builder basecontroller.ObjectReconcilerBuilder
 
 	// auto generate ServiceFence or not
-	if cfg == nil || !cfg.DisableAutoFence {
+	if cfg == nil || cfg.AutoFence {
 		builder = builder.Add(basecontroller.ObjectReconcileItem{
 			Name:    "Namespace",
 			ApiType: &corev1.Namespace{},
