@@ -1,3 +1,7 @@
+**NOTE: The project has been migrated to** [slime-io/slime](https://github.com/slime-io/slime/tree/master/staging/src/slime.io/slime/modules/lazyload)
+
+---
+
 - [Lazyload Overview](#lazyload-overview)
   - [Features](#features)
   - [Backgroud](#backgroud)
