@@ -1,3 +1,7 @@
+**注意: 本项目已经被迁移至** [slime-io/slime](https://github.com/slime-io/slime/tree/master/staging/src/slime.io/slime/modules/lazyload)
+
+---
+
 - [懒加载概述](#懒加载概述)
   - [特点](#特点)
   - [背景](#背景)
